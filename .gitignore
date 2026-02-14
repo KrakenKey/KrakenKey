@@ -1,0 +1,6 @@
+# Child repos — tracked independently
+app/
+infra/
+
+# Devcontainer generated env (contains BWS secrets)
+.devcontainer/env/api.env

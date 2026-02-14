@@ -1,0 +1,24 @@
+{
+	"name": "krakenkey-local-dev",
+	"dockerComposeFile": ["./docker-compose.yml"],
+	"service": "node",
+	"workspaceFolder": "/workspaces",
+
+	"forwardPorts": [443, 80, 5432, 6379],
+
+	"initializeCommand": ".devcontainer/scripts/init.sh",
+	"postCreateCommand": ".devcontainer/scripts/post-create.sh",
+
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"dbaeumer.vscode-eslint",
+				"esbenp.prettier-vscode",
+				"ms-azuretools.vscode-docker"
+			],
+			"settings": {
+				"terminal.integrated.defaultProfile.linux": "bash"
+			}
+		}
+	}
+}
