@@ -2,3 +2,6 @@
 	path = app
 	url = git@github.com:krakenkey/app.git
 	branch = main
+[submodule "web"]
+	path = web
+	url = git@github.com:krakenkey/web.git
