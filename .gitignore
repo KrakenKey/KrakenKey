@@ -1,6 +1,18 @@
-# Child repos — tracked independently
-app/
+# Infrastructure repo (not published yet)
 infra/
 
 # Devcontainer generated env (contains BWS secrets)
 .devcontainer/env/api.env
+
+# Internal working directories
+_work/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
+.idea/

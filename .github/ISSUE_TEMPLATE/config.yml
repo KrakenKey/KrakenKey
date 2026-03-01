@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions & Support
+    url: https://github.com/krakenkey/krakenkey/discussions
+    about: Ask questions and get help from the community. Please don't open an issue for support requests.
+  - name: Security Vulnerabilities
+    url: https://github.com/krakenkey/krakenkey/blob/main/SECURITY.md
+    about: Please report security vulnerabilities responsibly. Do NOT open a public issue.
