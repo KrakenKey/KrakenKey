@@ -5,3 +5,4 @@
 [submodule "web"]
 	path = web
 	url = git@github.com:krakenkey/web.git
+	branch = main
