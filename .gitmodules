@@ -1,3 +1,4 @@
 [submodule "app"]
 	path = app
 	url = git@github.com:krakenkey/app.git
+	branch = main
