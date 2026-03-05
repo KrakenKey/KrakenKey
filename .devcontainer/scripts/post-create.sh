@@ -40,7 +40,8 @@ fi
 
 # Install pre-commit into the venv and run the venv's pre-commit binary
 "$PYVENV_DIR/bin/pip" install pre-commit --quiet
-cd /workspaces && "$PYVENV_DIR/bin/pre-commit" install
+cd /workspaces     && "$PYVENV_DIR/bin/pre-commit" install
+cd /workspaces/app && "$PYVENV_DIR/bin/pre-commit" install
 
 # Ensure new terminals auto-activate the venv (idempotent)
 BASH_RC="${HOME}/.bashrc"
