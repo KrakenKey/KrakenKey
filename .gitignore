@@ -16,3 +16,6 @@ Thumbs.db
 *.swo
 *~
 .idea/
+
+# Local dev config
+.claude/

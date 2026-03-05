@@ -4,7 +4,7 @@
 	"service": "node",
 	"workspaceFolder": "/workspaces",
 
-	"forwardPorts": [443, 80, 5432, 6379],
+	"forwardPorts": [80, 443, 5432, 6379, 8080],
 
 	"initializeCommand": ".devcontainer/scripts/init.sh",
 	"postCreateCommand": ".devcontainer/scripts/post-create.sh",

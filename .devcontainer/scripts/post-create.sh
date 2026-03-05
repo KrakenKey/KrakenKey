@@ -16,7 +16,24 @@ if [ ! -f "$ENV_DIR/api.env" ]; then
 	cp "$ENV_DIR/api.env.local-defaults" "$ENV_DIR/api.env"
 fi
 
-# ─── 2. Install yarn dependencies ─────────────────────────────────────────────
+# ─── 2. Claude Code memory persistence ────────────────────────────────────────
+# Claude Code stores auto-memory in $HOME/.claude/ which doesn't survive container
+# rebuilds. Symlink it into the workspace so it persists via the volume mount.
+
+CLAUDE_WORKSPACE_DIR="/workspaces/.claude"
+CLAUDE_HOME_DIR="${HOME}/.claude"
+
+if [ -d "$CLAUDE_WORKSPACE_DIR" ]; then
+	# Ensure the home directory symlink exists
+	if [ ! -L "$CLAUDE_HOME_DIR" ]; then
+		# Back up any existing non-symlink claude dir
+		[ -d "$CLAUDE_HOME_DIR" ] && mv "$CLAUDE_HOME_DIR" "${CLAUDE_HOME_DIR}.bak"
+		ln -sf "$CLAUDE_WORKSPACE_DIR" "$CLAUDE_HOME_DIR"
+		echo "Linked Claude Code data: $CLAUDE_HOME_DIR -> $CLAUDE_WORKSPACE_DIR"
+	fi
+fi
+
+# ─── 3. Install yarn dependencies ─────────────────────────────────────────────
 
 echo ""
 echo "Installing yarn dependencies..."
@@ -24,8 +41,9 @@ echo "Installing yarn dependencies..."
 cd /workspaces/app/shared && yarn install
 cd /workspaces/app/backend && yarn install
 cd /workspaces/app/frontend && yarn install
+cd /workspaces/web && npm install
 
-# ─── 3. Pre-commit hooks ──────────────────────────────────────────────────────
+# ─── 4. Pre-commit hooks ──────────────────────────────────────────────────────
 
 echo ""
 echo "Setting up pre-commit hooks..."

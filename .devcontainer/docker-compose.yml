@@ -24,6 +24,7 @@ services:
     env_file:
       - ./env/api.env
       - ./env/api-local-overrides.env
+      - ./env/web.env
     volumes:
       - ..:/workspaces
     working_dir: /workspaces
@@ -37,13 +38,15 @@ services:
       - "traefik.http.routers.krakenkey-api.tls=true"
       - "traefik.http.routers.krakenkey-api.service=krakenkey-api"
       - "traefik.http.services.krakenkey-api.loadbalancer.server.port=8080"
-      # --- Web routing ---
-      - "traefik.http.routers.krakenkey-web.rule=Host(`dev.krakenkey.io`)"
-      - "traefik.http.routers.krakenkey-web.entrypoints=websecure"
-      - "traefik.http.routers.krakenkey-web.tls=true"
-      - "traefik.http.routers.krakenkey-web.service=krakenkey-web"
-      - "traefik.http.services.krakenkey-web.loadbalancer.server.port=5173"
+      # --- App routing ---
+      - "traefik.http.routers.krakenkey-app.rule=Host(`app-dev.krakenkey.io`)"
+      - "traefik.http.routers.krakenkey-app.entrypoints=websecure"
+      - "traefik.http.routers.krakenkey-app.tls=true"
+      - "traefik.http.routers.krakenkey-app.service=krakenkey-app"
+      - "traefik.http.services.krakenkey-app.loadbalancer.server.port=5173"
     depends_on:
+      traefik:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       redis:
@@ -61,7 +64,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
-      - "8080:8080"
+      - "8181:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./traefik/config.yaml:/etc/traefik/config.yaml:ro
