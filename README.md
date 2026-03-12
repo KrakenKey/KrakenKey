@@ -12,6 +12,8 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg" alt="License: AGPL-3.0"></a>
+  <a href="https://krakenkey.io"><img src="https://img.shields.io/badge/status-early%20access-orange.svg" alt="Status: Early Access"></a>
+  <a href="https://krakenkey.io"><img src="https://img.shields.io/badge/website-krakenkey.io-06b6d4.svg" alt="Website"></a>
 </p>
 
 ## What is KrakenKey?
