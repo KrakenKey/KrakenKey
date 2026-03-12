@@ -6,3 +6,7 @@
 	path = web
 	url = git@github.com:krakenkey/web.git
 	branch = main
+[submodule "cli"]
+	path = cli
+	url = git@github.com:krakenkey/cli.git
+	branch = main
