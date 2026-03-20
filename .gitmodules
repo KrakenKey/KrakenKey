@@ -10,3 +10,7 @@
 	path = cli
 	url = git@github.com:krakenkey/cli.git
 	branch = main
+[submodule "probe"]
+	path = probe
+	url = https://github.com/krakenkey/probe.git
+	branch = main
