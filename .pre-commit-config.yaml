@@ -12,8 +12,11 @@ repos:
       - id: trailing-whitespace
       - id: end-of-file-fixer
 
-  # ── Secrets detection ──────────────────────────────────────────────────────
-  - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.22.1
+  # ── Local hooks (binaries installed via devcontainer Dockerfile) ───────────
+  - repo: local
     hooks:
       - id: gitleaks
+        name: gitleaks
+        entry: gitleaks git --pre-commit --redact --staged --verbose
+        language: system
+        pass_filenames: false
