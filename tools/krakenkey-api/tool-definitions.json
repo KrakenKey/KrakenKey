@@ -1,0 +1,474 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "name": "krakenkey-api",
+  "description": "Tools for interacting with the KrakenKey TLS certificate management API",
+  "version": "0.1.0",
+  "base_url": "https://api.krakenkey.io",
+  "auth": {
+    "type": "bearer",
+    "header": "Authorization",
+    "prefix": "Bearer",
+    "description": "API key (starts with kk_) or JWT access token"
+  },
+  "tools": [
+    {
+      "name": "get_api_status",
+      "description": "Check if the KrakenKey API is running and get the current version",
+      "method": "GET",
+      "path": "/",
+      "auth_required": false,
+      "parameters": {},
+      "response": {
+        "status": "string",
+        "version": "string"
+      }
+    },
+    {
+      "name": "health_check",
+      "description": "Get API health status including database, Redis, and auth provider connectivity",
+      "method": "GET",
+      "path": "/health/readiness",
+      "auth_required": false,
+      "parameters": {},
+      "response": {
+        "status": "string ('ok' | 'error')",
+        "details": "object (per-service health)"
+      }
+    },
+    {
+      "name": "get_profile",
+      "description": "Get the authenticated user's profile including resource counts (domains, certificates, API keys)",
+      "method": "GET",
+      "path": "/auth/profile",
+      "auth_required": true,
+      "parameters": {},
+      "response": {
+        "id": "string",
+        "username": "string",
+        "email": "string",
+        "displayName": "string | null",
+        "createdAt": "ISO8601",
+        "plan": "string | null",
+        "resourceCounts": {
+          "domains": "number",
+          "certificates": "number",
+          "apiKeys": "number"
+        }
+      }
+    },
+    {
+      "name": "update_profile",
+      "description": "Update the authenticated user's display name or notification preferences",
+      "method": "PATCH",
+      "path": "/auth/profile",
+      "auth_required": true,
+      "parameters": {
+        "body": {
+          "displayName": { "type": "string", "max_length": 100, "required": false },
+          "notificationPreferences": {
+            "type": "object",
+            "required": false,
+            "properties": {
+              "cert_issued": "boolean",
+              "cert_renewed": "boolean",
+              "cert_failed": "boolean",
+              "cert_expiry_warning": "boolean",
+              "cert_revoked": "boolean",
+              "domain_verification_failed": "boolean",
+              "plan_limit_reached": "boolean",
+              "auto_renewal_paused": "boolean"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "list_api_keys",
+      "description": "List all API keys for the authenticated user (metadata only, not the secret values)",
+      "method": "GET",
+      "path": "/auth/api-keys",
+      "auth_required": true,
+      "parameters": {},
+      "response": [
+        {
+          "id": "string (UUID)",
+          "name": "string",
+          "createdAt": "ISO8601",
+          "expiresAt": "ISO8601 | null"
+        }
+      ]
+    },
+    {
+      "name": "create_api_key",
+      "description": "Create a new API key. The key value (kk_...) is returned only once -- store it immediately",
+      "method": "POST",
+      "path": "/auth/api-keys",
+      "auth_required": true,
+      "parameters": {
+        "body": {
+          "name": { "type": "string", "max_length": 100, "required": false, "default": "default" },
+          "expiresAt": { "type": "ISO8601", "required": false }
+        }
+      },
+      "response": {
+        "apiKey": "string (kk_... -- shown only once)",
+        "id": "string (UUID)",
+        "name": "string"
+      }
+    },
+    {
+      "name": "delete_api_key",
+      "description": "Delete an API key by its ID",
+      "method": "DELETE",
+      "path": "/auth/api-keys/{id}",
+      "auth_required": true,
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "format": "uuid", "required": true }
+        }
+      }
+    },
+    {
+      "name": "list_domains",
+      "description": "List all domains registered by the authenticated user",
+      "method": "GET",
+      "path": "/domains",
+      "auth_required": true,
+      "parameters": {},
+      "response": [
+        {
+          "id": "string (UUID)",
+          "hostname": "string",
+          "verificationCode": "string",
+          "isVerified": "boolean",
+          "createdAt": "ISO8601",
+          "updatedAt": "ISO8601"
+        }
+      ]
+    },
+    {
+      "name": "register_domain",
+      "description": "Register a new domain for certificate management. Returns a verification code that must be set as a DNS TXT record",
+      "method": "POST",
+      "path": "/domains",
+      "auth_required": true,
+      "parameters": {
+        "body": {
+          "hostname": { "type": "string", "max_length": 253, "required": true, "description": "Fully qualified domain name (e.g., example.com)" }
+        }
+      },
+      "response": {
+        "id": "string (UUID)",
+        "hostname": "string",
+        "verificationCode": "string (set this as TXT record at @ in DNS)",
+        "isVerified": "boolean (false until verified)",
+        "createdAt": "ISO8601"
+      }
+    },
+    {
+      "name": "get_domain",
+      "description": "Get details of a specific domain",
+      "method": "GET",
+      "path": "/domains/{id}",
+      "auth_required": true,
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "format": "uuid", "required": true }
+        }
+      }
+    },
+    {
+      "name": "verify_domain",
+      "description": "Trigger DNS verification for a domain. The TXT record must already be set. This is a rate-limited (expensive) operation",
+      "method": "POST",
+      "path": "/domains/{id}/verify",
+      "auth_required": true,
+      "rate_limit_category": "expensive",
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "format": "uuid", "required": true }
+        }
+      }
+    },
+    {
+      "name": "delete_domain",
+      "description": "Delete a registered domain",
+      "method": "DELETE",
+      "path": "/domains/{id}",
+      "auth_required": true,
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "format": "uuid", "required": true }
+        }
+      }
+    },
+    {
+      "name": "list_certificates",
+      "description": "List all TLS certificates for the authenticated user",
+      "method": "GET",
+      "path": "/certs/tls",
+      "auth_required": true,
+      "parameters": {},
+      "response": [
+        {
+          "id": "number",
+          "rawCsr": "string (PEM)",
+          "parsedCsr": { "subject": "string", "keyType": "string", "keySize": "number", "sanList": ["string"] },
+          "crtPem": "string (PEM) | null",
+          "status": "string (pending | issuing | issued | failed | renewing | revoking | revoked)",
+          "expiresAt": "ISO8601 | null",
+          "autoRenew": "boolean",
+          "renewalCount": "number",
+          "createdAt": "ISO8601"
+        }
+      ]
+    },
+    {
+      "name": "submit_csr",
+      "description": "Submit a PEM-encoded Certificate Signing Request for issuance. The domain(s) in the CSR must be verified. Issuance is async -- poll the returned ID for status. This is a rate-limited (expensive) operation",
+      "method": "POST",
+      "path": "/certs/tls",
+      "auth_required": true,
+      "rate_limit_category": "expensive",
+      "parameters": {
+        "body": {
+          "csrPem": { "type": "string", "max_length": 10000, "required": true, "description": "PEM-encoded CSR (-----BEGIN CERTIFICATE REQUEST-----...)" }
+        }
+      },
+      "response": {
+        "id": "number",
+        "status": "string (pending)"
+      }
+    },
+    {
+      "name": "get_certificate",
+      "description": "Get certificate details and status. When status is 'issued', crtPem contains the certificate",
+      "method": "GET",
+      "path": "/certs/tls/{id}",
+      "auth_required": true,
+      "parameters": {
+        "path": {
+          "id": { "type": "number", "required": true }
+        }
+      }
+    },
+    {
+      "name": "get_certificate_details",
+      "description": "Get parsed details of an issued certificate (serial number, issuer, validity dates, fingerprint). Only works for certificates with status 'issued'",
+      "method": "GET",
+      "path": "/certs/tls/{id}/details",
+      "auth_required": true,
+      "parameters": {
+        "path": {
+          "id": { "type": "number", "required": true }
+        }
+      },
+      "response": {
+        "serialNumber": "string",
+        "issuer": "string",
+        "subject": "string",
+        "validFrom": "ISO8601",
+        "validTo": "ISO8601",
+        "keyType": "string",
+        "keySize": "number",
+        "fingerprint": "string"
+      }
+    },
+    {
+      "name": "update_certificate",
+      "description": "Update a certificate's properties (e.g., toggle auto-renewal)",
+      "method": "PATCH",
+      "path": "/certs/tls/{id}",
+      "auth_required": true,
+      "parameters": {
+        "path": {
+          "id": { "type": "number", "required": true }
+        },
+        "body": {
+          "autoRenew": { "type": "boolean", "required": false },
+          "csrPem": { "type": "string", "required": false }
+        }
+      }
+    },
+    {
+      "name": "renew_certificate",
+      "description": "Trigger renewal of an issued certificate. Async -- poll for status. This is a rate-limited (expensive) operation",
+      "method": "POST",
+      "path": "/certs/tls/{id}/renew",
+      "auth_required": true,
+      "rate_limit_category": "expensive",
+      "parameters": {
+        "path": {
+          "id": { "type": "number", "required": true }
+        }
+      }
+    },
+    {
+      "name": "retry_certificate",
+      "description": "Retry issuance of a failed certificate. Only works when status is 'failed'. This is a rate-limited (expensive) operation",
+      "method": "POST",
+      "path": "/certs/tls/{id}/retry",
+      "auth_required": true,
+      "rate_limit_category": "expensive",
+      "parameters": {
+        "path": {
+          "id": { "type": "number", "required": true }
+        }
+      }
+    },
+    {
+      "name": "revoke_certificate",
+      "description": "Revoke an issued certificate. Only works when status is 'issued'. This is a rate-limited (expensive) operation",
+      "method": "POST",
+      "path": "/certs/tls/{id}/revoke",
+      "auth_required": true,
+      "rate_limit_category": "expensive",
+      "parameters": {
+        "path": {
+          "id": { "type": "number", "required": true }
+        },
+        "body": {
+          "reason": { "type": "number", "required": false, "description": "RFC 5280 reason code: 0=unspecified, 1=keyCompromise, 3=affiliationChanged, 4=superseded, 5=cessationOfOperation" }
+        }
+      }
+    },
+    {
+      "name": "delete_certificate",
+      "description": "Delete a certificate record. Only works when status is 'failed' or 'revoked'",
+      "method": "DELETE",
+      "path": "/certs/tls/{id}",
+      "auth_required": true,
+      "parameters": {
+        "path": {
+          "id": { "type": "number", "required": true }
+        }
+      }
+    },
+    {
+      "name": "get_subscription",
+      "description": "Get the authenticated user's current subscription plan and status",
+      "method": "GET",
+      "path": "/billing/subscription",
+      "auth_required": true,
+      "parameters": {},
+      "response": {
+        "plan": "string (free | starter | team | business | enterprise)",
+        "status": "string (active | past_due | canceled | incomplete | trialing)",
+        "currentPeriodEnd": "ISO8601 | null",
+        "cancelAtPeriodEnd": "boolean"
+      }
+    },
+    {
+      "name": "preview_upgrade",
+      "description": "Preview the prorated cost of upgrading to a different plan",
+      "method": "POST",
+      "path": "/billing/upgrade/preview",
+      "auth_required": true,
+      "parameters": {
+        "body": {
+          "plan": { "type": "string", "enum": ["starter", "team", "business", "enterprise"], "required": true }
+        }
+      },
+      "response": {
+        "immediateAmountCents": "number",
+        "currency": "string",
+        "targetPlan": "string",
+        "currentPeriodEnd": "ISO8601"
+      }
+    },
+    {
+      "name": "upgrade_plan",
+      "description": "Upgrade the user's subscription plan with proration",
+      "method": "POST",
+      "path": "/billing/upgrade",
+      "auth_required": true,
+      "parameters": {
+        "body": {
+          "plan": { "type": "string", "enum": ["starter", "team", "business", "enterprise"], "required": true }
+        }
+      }
+    },
+    {
+      "name": "create_organization",
+      "description": "Create a new organization. The creating user becomes the owner. Fails if user is already in an org",
+      "method": "POST",
+      "path": "/organizations",
+      "auth_required": true,
+      "parameters": {
+        "body": {
+          "name": { "type": "string", "min_length": 2, "max_length": 80, "required": true }
+        }
+      }
+    },
+    {
+      "name": "get_organization",
+      "description": "Get organization details including member list",
+      "method": "GET",
+      "path": "/organizations/{id}",
+      "auth_required": true,
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "format": "uuid", "required": true }
+        }
+      }
+    },
+    {
+      "name": "invite_member",
+      "description": "Invite a user to the organization by email. The user must already have a KrakenKey account",
+      "method": "POST",
+      "path": "/organizations/{id}/members",
+      "auth_required": true,
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "format": "uuid", "required": true }
+        },
+        "body": {
+          "email": { "type": "string", "required": true },
+          "role": { "type": "string", "enum": ["admin", "member", "viewer"], "required": false, "default": "member" }
+        }
+      }
+    },
+    {
+      "name": "update_member_role",
+      "description": "Change a member's role in the organization",
+      "method": "PATCH",
+      "path": "/organizations/{id}/members/{userId}",
+      "auth_required": true,
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "format": "uuid", "required": true },
+          "userId": { "type": "string", "required": true }
+        },
+        "body": {
+          "role": { "type": "string", "enum": ["admin", "member", "viewer"], "required": true }
+        }
+      }
+    },
+    {
+      "name": "remove_member",
+      "description": "Remove a member from the organization",
+      "method": "DELETE",
+      "path": "/organizations/{id}/members/{userId}",
+      "auth_required": true,
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "format": "uuid", "required": true },
+          "userId": { "type": "string", "required": true }
+        }
+      }
+    },
+    {
+      "name": "submit_feedback",
+      "description": "Submit user feedback with a message and rating",
+      "method": "POST",
+      "path": "/feedback",
+      "auth_required": true,
+      "parameters": {
+        "body": {
+          "message": { "type": "string", "max_length": 5000, "required": true },
+          "rating": { "type": "number", "minimum": 1, "maximum": 5, "required": true }
+        }
+      }
+    }
+  ]
+}
