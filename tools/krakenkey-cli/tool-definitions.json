@@ -1,0 +1,257 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "name": "krakenkey-cli",
+  "description": "Tools for using the KrakenKey CLI for TLS certificate management and endpoint monitoring",
+  "version": "0.1.0",
+  "binary": "krakenkey",
+  "global_flags": {
+    "--api-url": { "type": "string", "env": "KK_API_URL", "description": "API base URL" },
+    "--api-key": { "type": "string", "env": "KK_API_KEY", "description": "API key" },
+    "--output": { "type": "string", "enum": ["text", "json"], "env": "KK_OUTPUT", "description": "Output format" },
+    "--no-color": { "type": "boolean", "description": "Disable colored output" },
+    "--verbose": { "type": "boolean", "description": "Enable verbose logging" }
+  },
+  "tools": [
+    {
+      "name": "auth_login",
+      "description": "Save an API key to the local config file for subsequent requests",
+      "command": "auth login",
+      "flags": {
+        "--api-key": { "type": "string", "required": false, "description": "API key (prompted interactively if not provided)" }
+      },
+      "example": "krakenkey auth login --api-key kk_abc123..."
+    },
+    {
+      "name": "auth_logout",
+      "description": "Remove the stored API key from the local config",
+      "command": "auth logout",
+      "example": "krakenkey auth logout"
+    },
+    {
+      "name": "auth_status",
+      "description": "Show the current authenticated user's profile and resource counts",
+      "command": "auth status",
+      "example": "krakenkey auth status"
+    },
+    {
+      "name": "auth_keys_list",
+      "description": "List all API keys for the authenticated user",
+      "command": "auth keys list",
+      "example": "krakenkey auth keys list"
+    },
+    {
+      "name": "auth_keys_create",
+      "description": "Create a new API key. The key value is shown only once",
+      "command": "auth keys create",
+      "flags": {
+        "--name": { "type": "string", "required": true },
+        "--expires-at": { "type": "string", "required": false, "description": "ISO 8601 expiry date" }
+      },
+      "example": "krakenkey auth keys create --name ci-deploy"
+    },
+    {
+      "name": "auth_keys_delete",
+      "description": "Delete an API key by ID",
+      "command": "auth keys delete",
+      "args": ["id"],
+      "example": "krakenkey auth keys delete <uuid>"
+    },
+    {
+      "name": "domain_add",
+      "description": "Register a new domain and receive DNS verification instructions",
+      "command": "domain add",
+      "args": ["hostname"],
+      "example": "krakenkey domain add example.com"
+    },
+    {
+      "name": "domain_list",
+      "description": "List all registered domains in a table (ID, Hostname, Verified, Created)",
+      "command": "domain list",
+      "example": "krakenkey domain list"
+    },
+    {
+      "name": "domain_show",
+      "description": "Show full details for a domain including verification code",
+      "command": "domain show",
+      "args": ["id"],
+      "example": "krakenkey domain show <uuid>"
+    },
+    {
+      "name": "domain_verify",
+      "description": "Trigger DNS TXT verification for a domain. The TXT record must already be set",
+      "command": "domain verify",
+      "args": ["id"],
+      "example": "krakenkey domain verify <uuid>"
+    },
+    {
+      "name": "domain_delete",
+      "description": "Delete a registered domain",
+      "command": "domain delete",
+      "args": ["id"],
+      "example": "krakenkey domain delete <uuid>"
+    },
+    {
+      "name": "endpoint_add",
+      "description": "Add a new monitored endpoint for TLS scanning. Subject to plan limits",
+      "command": "endpoint add",
+      "args": ["host"],
+      "flags": {
+        "--port": { "type": "number", "required": false, "default": 443 },
+        "--sni": { "type": "string", "required": false, "description": "SNI override" },
+        "--label": { "type": "string", "required": false, "description": "Human-readable label" }
+      },
+      "example": "krakenkey endpoint add example.com --port 443 --label 'Production API'"
+    },
+    {
+      "name": "endpoint_list",
+      "description": "List all monitored endpoints in a table (ID, Host, Port, Label, Active, Regions, Created)",
+      "command": "endpoint list",
+      "example": "krakenkey endpoint list"
+    },
+    {
+      "name": "endpoint_show",
+      "description": "Show full details for an endpoint including hosted regions",
+      "command": "endpoint show",
+      "args": ["id"],
+      "example": "krakenkey endpoint show <uuid>"
+    },
+    {
+      "name": "endpoint_enable",
+      "description": "Enable a disabled endpoint to resume monitoring",
+      "command": "endpoint enable",
+      "args": ["id"],
+      "example": "krakenkey endpoint enable <uuid>"
+    },
+    {
+      "name": "endpoint_disable",
+      "description": "Disable an endpoint to pause monitoring without deleting it",
+      "command": "endpoint disable",
+      "args": ["id"],
+      "example": "krakenkey endpoint disable <uuid>"
+    },
+    {
+      "name": "endpoint_delete",
+      "description": "Delete an endpoint and its hosted region assignments",
+      "command": "endpoint delete",
+      "args": ["id"],
+      "example": "krakenkey endpoint delete <uuid>"
+    },
+    {
+      "name": "endpoint_region_add",
+      "description": "Add a hosted probe region to an endpoint (Team tier+). Enables KrakenKey-operated probes to scan this endpoint from the specified region",
+      "command": "endpoint region add",
+      "args": ["endpoint-id", "region"],
+      "example": "krakenkey endpoint region add <uuid> us-east-1"
+    },
+    {
+      "name": "endpoint_region_remove",
+      "description": "Remove a hosted probe region from an endpoint",
+      "command": "endpoint region remove",
+      "args": ["endpoint-id", "region"],
+      "example": "krakenkey endpoint region remove <uuid> us-east-1"
+    },
+    {
+      "name": "cert_issue",
+      "description": "Generate a private key and CSR locally, submit to KrakenKey, and optionally wait for issuance. Private key never leaves the machine",
+      "command": "cert issue",
+      "flags": {
+        "--domain": { "type": "string", "required": true, "description": "Primary domain (CN)" },
+        "--san": { "type": "string[]", "required": false, "description": "Additional SANs (repeat for multiple)" },
+        "--key-type": { "type": "string", "required": false, "default": "ecdsa-p256", "enum": ["rsa-2048", "rsa-4096", "ecdsa-p256", "ecdsa-p384"] },
+        "--key-out": { "type": "string", "required": false, "description": "Private key output path" },
+        "--csr-out": { "type": "string", "required": false, "description": "CSR output path" },
+        "--out": { "type": "string", "required": false, "description": "Certificate output path" },
+        "--auto-renew": { "type": "boolean", "required": false },
+        "--wait": { "type": "boolean", "required": false, "description": "Wait for issuance to complete" }
+      },
+      "example": "krakenkey cert issue --domain example.com --wait"
+    },
+    {
+      "name": "cert_submit",
+      "description": "Submit an existing CSR PEM file for issuance",
+      "command": "cert submit",
+      "flags": {
+        "--csr": { "type": "string", "required": true, "description": "Path to CSR PEM file" },
+        "--out": { "type": "string", "required": false },
+        "--auto-renew": { "type": "boolean", "required": false },
+        "--wait": { "type": "boolean", "required": false }
+      },
+      "example": "krakenkey cert submit --csr ./example.csr --wait"
+    },
+    {
+      "name": "cert_list",
+      "description": "List all certificates in a table (ID, Domain, Status, Expires, Auto-renew)",
+      "command": "cert list",
+      "flags": {
+        "--status": { "type": "string", "required": false, "description": "Filter by status" }
+      },
+      "example": "krakenkey cert list --status issued"
+    },
+    {
+      "name": "cert_show",
+      "description": "Show full details for a certificate including parsed cert info when issued",
+      "command": "cert show",
+      "args": ["id"],
+      "example": "krakenkey cert show 42"
+    },
+    {
+      "name": "cert_download",
+      "description": "Download the issued certificate PEM to a file",
+      "command": "cert download",
+      "args": ["id"],
+      "flags": {
+        "--out": { "type": "string", "required": false, "description": "Output file path" }
+      },
+      "example": "krakenkey cert download 42 --out ./example.crt"
+    },
+    {
+      "name": "cert_renew",
+      "description": "Trigger renewal of an issued certificate",
+      "command": "cert renew",
+      "args": ["id"],
+      "flags": {
+        "--wait": { "type": "boolean", "required": false }
+      },
+      "example": "krakenkey cert renew 42 --wait"
+    },
+    {
+      "name": "cert_revoke",
+      "description": "Revoke an issued certificate",
+      "command": "cert revoke",
+      "args": ["id"],
+      "flags": {
+        "--reason": { "type": "number", "required": false, "description": "RFC 5280 reason code (0-10)" }
+      },
+      "example": "krakenkey cert revoke 42 --reason 4"
+    },
+    {
+      "name": "cert_update",
+      "description": "Update certificate settings (e.g., toggle auto-renewal)",
+      "command": "cert update",
+      "args": ["id"],
+      "flags": {
+        "--auto-renew": { "type": "boolean", "required": false }
+      },
+      "example": "krakenkey cert update 42 --auto-renew=true"
+    },
+    {
+      "name": "cert_delete",
+      "description": "Delete a failed or revoked certificate record",
+      "command": "cert delete",
+      "args": ["id"],
+      "example": "krakenkey cert delete 42"
+    },
+    {
+      "name": "account_show",
+      "description": "Show the authenticated user's profile details",
+      "command": "account show",
+      "example": "krakenkey account show"
+    },
+    {
+      "name": "account_plan",
+      "description": "Show subscription plan and billing information",
+      "command": "account plan",
+      "example": "krakenkey account plan"
+    }
+  ]
+}

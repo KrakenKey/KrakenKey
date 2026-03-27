@@ -469,6 +469,237 @@
           "rating": { "type": "number", "minimum": 1, "maximum": 5, "required": true }
         }
       }
+    },
+    {
+      "name": "list_endpoints",
+      "description": "List all monitored endpoints for the authenticated user, including hosted region assignments",
+      "method": "GET",
+      "path": "/endpoints",
+      "auth_required": true,
+      "parameters": {},
+      "response": [
+        {
+          "id": "string (UUID)",
+          "userId": "string",
+          "host": "string",
+          "port": "number",
+          "sni": "string | null",
+          "label": "string | null",
+          "isActive": "boolean",
+          "hostedRegions": [{ "id": "string", "region": "string", "createdAt": "ISO8601" }],
+          "createdAt": "ISO8601",
+          "updatedAt": "ISO8601"
+        }
+      ]
+    },
+    {
+      "name": "create_endpoint",
+      "description": "Register a new endpoint for TLS monitoring. Subject to plan limits (3/10/50/200/unlimited by tier). Returns 403 with code 'plan_limit_exceeded' when at capacity",
+      "method": "POST",
+      "path": "/endpoints",
+      "auth_required": true,
+      "parameters": {
+        "body": {
+          "host": { "type": "string", "max_length": 253, "required": true, "description": "FQDN to monitor (e.g., example.com)" },
+          "port": { "type": "number", "required": false, "default": 443 },
+          "sni": { "type": "string", "max_length": 253, "required": false, "description": "SNI override (defaults to host)" },
+          "label": { "type": "string", "max_length": 100, "required": false, "description": "Human-readable label" }
+        }
+      },
+      "response": {
+        "id": "string (UUID)",
+        "host": "string",
+        "port": "number",
+        "isActive": "boolean",
+        "createdAt": "ISO8601"
+      }
+    },
+    {
+      "name": "get_endpoint",
+      "description": "Get details of a specific monitored endpoint including its hosted regions",
+      "method": "GET",
+      "path": "/endpoints/{id}",
+      "auth_required": true,
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "format": "uuid", "required": true }
+        }
+      }
+    },
+    {
+      "name": "update_endpoint",
+      "description": "Update an endpoint's mutable properties (SNI override, label, active status). Host and port cannot be changed after creation",
+      "method": "PATCH",
+      "path": "/endpoints/{id}",
+      "auth_required": true,
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "format": "uuid", "required": true }
+        },
+        "body": {
+          "sni": { "type": "string", "required": false },
+          "label": { "type": "string", "required": false },
+          "isActive": { "type": "boolean", "required": false }
+        }
+      }
+    },
+    {
+      "name": "delete_endpoint",
+      "description": "Delete a monitored endpoint. Cascades to hosted region assignments. Scan results are preserved but unlinked",
+      "method": "DELETE",
+      "path": "/endpoints/{id}",
+      "auth_required": true,
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "format": "uuid", "required": true }
+        }
+      }
+    },
+    {
+      "name": "add_hosted_region",
+      "description": "Add a hosted probe region to an endpoint. Requires Team tier or above. Subject to hostedProbeRegions and hostedMonitoredEndpoints plan limits",
+      "method": "POST",
+      "path": "/endpoints/{id}/regions",
+      "auth_required": true,
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "format": "uuid", "required": true }
+        },
+        "body": {
+          "region": { "type": "string", "max_length": 50, "required": true, "description": "Region identifier (e.g., us-east-1)" }
+        }
+      },
+      "response": {
+        "id": "string (UUID)",
+        "endpointId": "string",
+        "region": "string",
+        "createdAt": "ISO8601"
+      }
+    },
+    {
+      "name": "remove_hosted_region",
+      "description": "Remove a hosted probe region from an endpoint",
+      "method": "DELETE",
+      "path": "/endpoints/{id}/regions/{region}",
+      "auth_required": true,
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "format": "uuid", "required": true },
+          "region": { "type": "string", "required": true }
+        }
+      }
+    },
+    {
+      "name": "get_endpoint_results",
+      "description": "Get paginated TLS scan results for a specific endpoint. Results are ordered by scannedAt descending",
+      "method": "GET",
+      "path": "/endpoints/{id}/results",
+      "auth_required": true,
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "format": "uuid", "required": true }
+        },
+        "query": {
+          "page": { "type": "number", "required": false, "default": 1 },
+          "limit": { "type": "number", "required": false, "default": 20, "max": 100 }
+        }
+      },
+      "response": {
+        "data": [
+          {
+            "id": "string (UUID)",
+            "probeId": "string",
+            "host": "string",
+            "port": "number",
+            "connectionSuccess": "boolean",
+            "latencyMs": "number | null",
+            "tlsVersion": "string | null",
+            "certSubject": "string | null",
+            "certDaysUntilExpiry": "number | null",
+            "certTrusted": "boolean | null",
+            "probeMode": "string (standalone | connected | hosted)",
+            "probeRegion": "string | null",
+            "scannedAt": "ISO8601"
+          }
+        ],
+        "total": "number"
+      }
+    },
+    {
+      "name": "get_endpoint_latest_results",
+      "description": "Get the most recent scan result per probe for an endpoint. Useful for dashboard display showing current status across all probes",
+      "method": "GET",
+      "path": "/endpoints/{id}/results/latest",
+      "auth_required": true,
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "format": "uuid", "required": true }
+        }
+      }
+    },
+    {
+      "name": "register_probe",
+      "description": "Register or heartbeat a probe. Accepts user API key (connected mode) or service key (hosted mode). Updates lastSeenAt timestamp",
+      "method": "POST",
+      "path": "/probes/register",
+      "auth_required": true,
+      "auth_type": "dual (user API key or service key)",
+      "parameters": {
+        "body": {
+          "probeId": { "type": "string", "required": true },
+          "name": { "type": "string", "required": true },
+          "version": { "type": "string", "required": true },
+          "mode": { "type": "string", "enum": ["standalone", "connected", "hosted"], "required": true },
+          "region": { "type": "string", "required": false },
+          "os": { "type": "string", "required": true },
+          "arch": { "type": "string", "required": true }
+        }
+      }
+    },
+    {
+      "name": "submit_probe_report",
+      "description": "Submit TLS scan results from a probe. Each result is matched to a registered endpoint by host:port. Unmatched results are rejected for connected/hosted probes",
+      "method": "POST",
+      "path": "/probes/report",
+      "auth_required": true,
+      "auth_type": "dual (user API key or service key)",
+      "parameters": {
+        "body": {
+          "probeId": { "type": "string", "required": true },
+          "mode": { "type": "string", "enum": ["standalone", "connected", "hosted"], "required": true },
+          "region": { "type": "string", "required": false },
+          "timestamp": { "type": "ISO8601", "required": true },
+          "results": {
+            "type": "array",
+            "required": true,
+            "items": {
+              "endpoint": { "host": "string", "port": "number", "sni": "string (optional)" },
+              "connection": { "success": "boolean", "error": "string?", "latencyMs": "number?", "tlsVersion": "string?", "cipherSuite": "string?", "ocspStapled": "boolean?" },
+              "certificate": "object (optional): subject, sans, issuer, serialNumber, notBefore, notAfter, daysUntilExpiry, keyType, keySize, signatureAlgorithm, fingerprint, chainDepth, chainComplete, trusted"
+            }
+          }
+        }
+      },
+      "response": {
+        "accepted": "number"
+      }
+    },
+    {
+      "name": "get_probe_config",
+      "description": "Fetch the endpoint list and scan interval for a probe. Connected probes get their owner's endpoints; hosted probes get endpoints with matching region",
+      "method": "GET",
+      "path": "/probes/{probeId}/config",
+      "auth_required": true,
+      "auth_type": "dual (user API key or service key)",
+      "parameters": {
+        "path": {
+          "probeId": { "type": "string", "required": true }
+        }
+      },
+      "response": {
+        "endpoints": [{ "host": "string", "port": "number", "sni": "string", "userId": "string" }],
+        "interval": "string (e.g., '60m')"
+      }
     }
   ]
 }
