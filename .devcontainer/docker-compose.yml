@@ -3,6 +3,8 @@ volumes:
     driver: local
   krakenkey_local_redis:
     driver: local
+  claude_data:
+    driver: local
 
 networks:
   krakenkey-local:
@@ -27,6 +29,7 @@ services:
       - ./env/web.env
     volumes:
       - ..:/workspaces
+      - claude_data:/home/node/.claude
     working_dir: /workspaces
     networks:
       - krakenkey-local

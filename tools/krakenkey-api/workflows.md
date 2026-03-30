@@ -139,6 +139,80 @@ POST /billing/upgrade
 Body: { "plan": "starter" }
 ```
 
+## 8. Set Up Endpoint Monitoring
+
+```
+Step 1: Create an endpoint
+  POST /endpoints
+  Body: { "host": "example.com", "port": 443, "label": "Production API" }
+  Response: { "id": "uuid", "host": "example.com", "port": 443, "isActive": true }
+
+Step 2 (optional): Add hosted probe regions (Team tier+)
+  POST /endpoints/{id}/regions
+  Body: { "region": "us-east-1" }
+  Repeat for additional regions (e.g., eu-west-1, ap-southeast-1)
+
+Step 3: Set up a connected probe
+  Install the krakenkey-probe binary
+  Configure with user API key:
+    KK_PROBE_API_KEY=kk_...
+    KK_PROBE_MODE=connected
+  The probe will fetch its endpoint list from GET /probes/{id}/config
+
+Step 4: View scan results
+  GET /endpoints/{id}/results/latest
+  Returns the most recent scan per probe (connection status, cert expiry, TLS version)
+
+  GET /endpoints/{id}/results?page=1&limit=20
+  Returns paginated historical results
+```
+
+## 9. Monitor Endpoint Health
+
+```
+# List all endpoints with status
+GET /endpoints
+Returns all endpoints with hostedRegions included
+
+# Check latest results (aggregated across probes)
+GET /endpoints/{id}/results/latest
+Each result includes: connectionSuccess, latencyMs, certDaysUntilExpiry, probeMode, probeRegion
+
+# Disable/enable monitoring
+PATCH /endpoints/{id}
+Body: { "isActive": false }
+
+# Remove hosted region
+DELETE /endpoints/{id}/regions/us-east-1
+```
+
+## 10. Connected Probe Setup (Self-Hosted)
+
+```
+# Probe authenticates with a user API key (not service key)
+# 1. User creates an API key
+POST /auth/api-keys
+Body: { "name": "my-probe" }
+Response: { "apiKey": "kk_abc123..." }
+
+# 2. Configure the probe
+KK_PROBE_API_URL=https://api.krakenkey.io
+KK_PROBE_API_KEY=kk_abc123...
+KK_PROBE_MODE=connected
+
+# 3. Probe registers itself on startup
+POST /probes/register (with Bearer kk_abc123...)
+Body: { "probeId": "auto-uuid", "name": "my-probe", "version": "0.1.0", "mode": "connected", "os": "linux", "arch": "amd64" }
+
+# 4. Probe fetches its endpoint list
+GET /probes/{probeId}/config
+Response: { "endpoints": [{ "host": "example.com", "port": 443 }], "interval": "60m" }
+
+# 5. After scanning, probe reports results
+POST /probes/report
+Body: { "probeId": "...", "mode": "connected", "timestamp": "...", "results": [...] }
+```
+
 ## Error Handling
 
 All errors return:

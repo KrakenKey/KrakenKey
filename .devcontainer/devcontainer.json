@@ -8,13 +8,20 @@
 
 	"initializeCommand": ".devcontainer/scripts/init.sh",
 	"postCreateCommand": ".devcontainer/scripts/post-create.sh",
+	"postStartCommand": "sudo chown -R node:node /home/node/.claude",
+
+	"containerEnv": {
+		"ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-4-6[1m]",
+		"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "90"
+	},
 
 	"customizations": {
 		"vscode": {
 			"extensions": [
 				"dbaeumer.vscode-eslint",
 				"esbenp.prettier-vscode",
-				"ms-azuretools.vscode-docker"
+				"ms-azuretools.vscode-docker",
+			"anthropics.claude-code"
 			],
 			"settings": {
 				"terminal.integrated.defaultProfile.linux": "bash"

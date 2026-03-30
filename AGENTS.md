@@ -4,9 +4,11 @@ Instructions and context for AI agents working on the KrakenKey project.
 
 ## What is KrakenKey?
 
-KrakenKey is a TLS certificate management platform that automates issuance via Let's Encrypt using ACME DNS-01 challenges. Users add a domain, set up two DNS records (TXT for ownership, CNAME to delegate ACME challenges), then submit CSRs to get certificates issued in ~4 minutes.
+KrakenKey is a TLS certificate management and endpoint monitoring platform. It automates certificate issuance via Let's Encrypt using ACME DNS-01 challenges, and monitors TLS health on user-defined endpoints via a Go probe binary.
 
-Private keys never leave the user's device. CSRs are generated client-side (browser WebCrypto API or OpenSSL). KrakenKey only handles the ACME flow on its infrastructure.
+Users add a domain, set up two DNS records (TXT for ownership, CNAME to delegate ACME challenges), then submit CSRs to get certificates issued in ~4 minutes. Private keys never leave the user's device.
+
+The probe component scans endpoints for TLS certificate status, expiry, chain validity, and connection health. It runs in three modes: standalone (local-only), connected (reports to KrakenKey API), and hosted (KrakenKey-operated infrastructure).
 
 ## Repository Layout
 
@@ -18,10 +20,13 @@ This is a monorepo with git submodules:
     backend/        # NestJS 11 REST API (TypeScript)
     frontend/       # React 19 + Vite 7 + Tailwind 4 (TypeScript)
     shared/         # Shared types and API route constants (@krakenkey/shared)
-  cli/              # CLI tool (Go 1.26, skeleton -- not yet implemented)
+  cli/              # CLI tool (Go 1.26)
   web/              # Marketing site (Astro 5, static, Cloudflare Pages)
   infra/            # Infrastructure (Terraform, Docker Compose, scripts)
-  probe/            # Health probe tool
+  probe/            # TLS endpoint monitoring probe (Go 1.23)
+  tools/            # AI agent skill definitions
+    krakenkey-api/  # API tool definitions and workflows
+    krakenkey-cli/  # CLI tool definitions and workflows
   .devcontainer/    # Local dev environment (Traefik + TLS + Postgres + Redis)
 ```
 
@@ -33,10 +38,11 @@ This is a monorepo with git submodules:
 | Frontend | React 19, Vite 7, Tailwind 4, Axios |
 | Database | PostgreSQL 18 |
 | Cache/Queue | Redis 8.6 |
-| Auth | Authentik (OIDC) + API keys (`kk_` prefix) |
+| Auth | Authentik (OIDC) + API keys (`kk_` prefix) + Service keys (`kk_svc_` prefix) |
 | API Docs | Swagger/OpenAPI (available at `/swagger-json`) |
 | Marketing | Astro 5, custom CSS |
-| CLI | Go 1.26, cobra-style manual routing |
+| CLI | Go 1.26, manual flag-based routing |
+| Probe | Go 1.23, TLS scanning, SQLite (standalone/buffer), Prometheus metrics |
 | Infra | Terraform (AWS + Cloudflare), Docker Compose |
 | CI/CD | GitHub Actions, GHCR container images |
 
@@ -68,6 +74,12 @@ cd app/backend && yarn test
 
 # Frontend (Vitest 4)
 cd app/frontend && yarn test --run
+
+# CLI (Go test)
+cd cli && go test ./...
+
+# Probe (Go test)
+cd probe && go test ./... -race
 ```
 
 Always run tests after making changes. Tests must pass before work is considered complete.
@@ -92,7 +104,7 @@ The `@krakenkey/shared` package uses `file:` dependencies (copied, not symlinked
 
 ### Pre-commit Hooks
 
-gitleaks, hadolint, terraform fmt/validate, markdown lint. Do not skip hooks (`--no-verify`).
+gitleaks, hadolint, terraform fmt/validate, markdown lint, ESLint. Do not skip hooks (`--no-verify`).
 
 ### Lint and Type Errors
 
@@ -106,12 +118,13 @@ OpenAPI spec: `GET /swagger-json` (always available). Swagger UI: `GET /swagger`
 
 ### Authentication
 
-Two methods, both via `Authorization: Bearer <token>`:
+Three methods, all via `Authorization: Bearer <token>`:
 
 1. **JWT** -- obtained through Authentik OAuth flow (`/auth/login` -> callback -> JWT)
-2. **API Key** -- persistent keys prefixed `kk_`, created via `POST /auth/api-keys`
+2. **User API Key** -- persistent keys prefixed `kk_`, created via `POST /auth/api-keys`. Used by CLI and connected probes.
+3. **Service Key** -- internal keys prefixed `kk_svc_`, for hosted probe infrastructure. Seeded from `KK_PROBE_API_KEY` env var.
 
-API keys are SHA-256 hashed in the database. The plaintext key is returned only once at creation.
+The probe endpoints (`/probes/*`) accept either user API keys or service keys (dual auth). All other authenticated endpoints accept JWT or user API keys.
 
 ### Endpoints
 
@@ -134,6 +147,18 @@ API keys are SHA-256 hashed in the database. The plaintext key is returned only 
 | GET | `/domains/:id` | Yes | Get domain details |
 | POST | `/domains/:id/verify` | Yes | Trigger DNS verification |
 | DELETE | `/domains/:id` | Yes | Delete domain |
+| GET | `/endpoints` | Yes | List monitored endpoints |
+| POST | `/endpoints` | Yes | Create monitored endpoint (plan limit enforced) |
+| GET | `/endpoints/:id` | Yes | Get endpoint details |
+| PATCH | `/endpoints/:id` | Yes | Update endpoint (sni, label, isActive) |
+| DELETE | `/endpoints/:id` | Yes | Delete endpoint |
+| POST | `/endpoints/:id/regions` | Yes | Add hosted probe region |
+| DELETE | `/endpoints/:id/regions/:region` | Yes | Remove hosted probe region |
+| GET | `/endpoints/:id/results` | Yes | Paginated scan results |
+| GET | `/endpoints/:id/results/latest` | Yes | Latest scan result per probe |
+| POST | `/probes/register` | Dual | Register or heartbeat a probe |
+| POST | `/probes/report` | Dual | Submit scan results |
+| GET | `/probes/:id/config` | Dual | Fetch endpoint list for probe |
 | GET | `/certs/tls` | Yes | List certificates |
 | POST | `/certs/tls` | Yes | Submit CSR for issuance |
 | GET | `/certs/tls/:id` | Yes | Get certificate details |
@@ -162,6 +187,8 @@ API keys are SHA-256 hashed in the database. The plaintext key is returned only 
 | POST | `/billing/upgrade` | Yes | Upgrade subscription |
 | POST | `/feedback` | Yes | Submit feedback |
 
+"Dual" auth means the endpoint accepts either a user API key (`kk_`) or a service key (`kk_svc_`).
+
 ### Error Format
 
 All errors follow this structure:
@@ -176,7 +203,7 @@ All errors follow this structure:
 }
 ```
 
-Validation errors return `message` as an array of strings.
+Validation errors return `message` as an array of strings. Plan limit errors include `code: "plan_limit_exceeded"`, `limit`, `current`, and `plan` fields.
 
 ### Rate Limiting
 
@@ -192,6 +219,19 @@ Tier-aware, tracked by user ID (authenticated) or IP (unauthenticated):
 
 Expensive operations: cert issuance, renewal, retry, revocation, domain verification.
 
+### Plan Limits
+
+| Resource | Free | Starter | Team | Business | Enterprise |
+|----------|------|---------|------|----------|------------|
+| Domains | 3 | 10 | 25 | 75 | unlimited |
+| Monitored endpoints | 3 | 10 | 50 | 200 | unlimited |
+| Min scan interval | 60m | 30m | 5m | 1m | 1m |
+| Hosted probe regions | - | - | 5 | 15 | unlimited |
+| Hosted endpoints | - | - | 25 | 100 | unlimited |
+| Scan result retention | 5d | 30d | 90d | 90d | 90d |
+
+Free and Starter tiers get connected probes only. Hosted monitoring unlocks at Team tier.
+
 ### Certificate Lifecycle
 
 ```
@@ -202,21 +242,86 @@ issued -> revoking -> revoked (delete possible)
 
 Issuance is asynchronous via BullMQ. Typical time: 2-5 minutes. Poll `GET /certs/tls/:id` for status.
 
+### Probe Modes
+
+| Mode | Auth | Endpoint Source | Results Storage | Use Case |
+|------|------|----------------|-----------------|----------|
+| standalone | None | Local YAML config | Local SQLite | OSS self-monitoring |
+| connected | User API key (`kk_`) | API or local config | API (SQLite fallback) | Customer self-hosted probe |
+| hosted | Service key (`kk_svc_`) | API (by region) | API | KrakenKey-operated infrastructure |
+
+## CLI Overview
+
+The `krakenkey` CLI (`cli/` directory) provides terminal access to all KrakenKey API features.
+
+### Installation
+
+```bash
+# From source
+cd cli && go build -o krakenkey ./cmd/krakenkey
+
+# Pre-built binaries available via GitHub Releases (goreleaser)
+```
+
+### Authentication
+
+```bash
+krakenkey auth login --api-key kk_...    # Save API key to config
+krakenkey auth status                     # Show current user
+krakenkey auth logout                     # Remove stored key
+```
+
+Config stored at `~/.config/krakenkey/config.yaml`. API key can also be set via `KK_API_KEY` env var.
+
+### Commands
+
+| Command | Subcommands | Description |
+|---------|-------------|-------------|
+| `auth` | login, logout, status, keys (list/create/delete) | Authentication and API key management |
+| `domain` | add, list, show, verify, delete | Domain registration and verification |
+| `cert` | issue, submit, list, show, download, renew, revoke, retry, update, delete | Certificate lifecycle |
+| `endpoint` | add, list, show, enable, disable, delete, region (add/remove) | Endpoint monitoring |
+| `account` | show, plan | Account and subscription info |
+
+### Output Formats
+
+```bash
+krakenkey --output json domain list   # Machine-readable JSON
+krakenkey domain list                  # Human-readable table (default)
+krakenkey --no-color domain list       # Plain text without ANSI colors
+```
+
+### Global Flags
+
+| Flag | Env Var | Description |
+|------|---------|-------------|
+| `--api-url` | `KK_API_URL` | API base URL |
+| `--api-key` | `KK_API_KEY` | API key |
+| `--output` | `KK_OUTPUT` | Output format: text or json |
+| `--no-color` | - | Disable colored output |
+| `--verbose` | - | Enable verbose logging |
+
 ## Key Patterns
 
 - **Environment variables**: all prefixed `KK_` (e.g., `KK_DB_HOST`, `KK_API_PORT`)
-- **Global guards**: JwtOrApiKeyGuard, TierAwareThrottlerGuard, RoleGuard
+- **Global guards**: JwtOrApiKeyGuard, TierAwareThrottlerGuard, RoleGuard, ServiceOrUserKeyGuard
 - **Global pipe**: ValidationPipe (whitelist: true, transform: true -- strips unknown properties)
 - **Global filter**: HttpExceptionFilter (standard error format above)
 - **Migrations**: auto-run on startup (`migrationsRun: true`, `synchronize: false`)
 - **ACME DNS strategy**: CloudflareDnsStrategy / Route53DnsStrategy (strategy pattern)
 - **Frontend state**: React Context (AuthContext, DomainsContext) with Axios interceptors
 - **CSR generation**: client-side only (Web Crypto API in browser, Go crypto stdlib in CLI)
+- **Endpoint monitoring**: Go probe binary scans TLS endpoints; NestJS API receives and stores results
+- **Dual auth**: Probe endpoints accept user API keys or service keys via ServiceOrUserKeyGuard
+- **Cron jobs**: probe staleness detection (3 AM), scan result retention cleanup (4 AM), domain re-verification (2 AM), cert expiry monitoring (6 AM)
 
 ## Writing Style
 
 When generating user-facing content: avoid em dashes, "delve", "leverage", "elevate", "streamline", "robust", "seamless", and other patterns commonly associated with AI-generated text. Write naturally and directly.
 
-## AI Agent API Tooling
+## AI Agent Skills
 
-See [tools/krakenkey-api/](tools/krakenkey-api/) for structured tool definitions that AI agents can use to interact with the KrakenKey API programmatically.
+See [tools/](tools/) for structured skill definitions that AI agents can use:
+
+- **[krakenkey-api](tools/krakenkey-api/)** -- Tool definitions and workflows for the KrakenKey REST API. Covers all endpoints including endpoint monitoring, probe management, certificate lifecycle, domain verification, billing, and organizations.
+- **[krakenkey-cli](tools/krakenkey-cli/)** -- Tool definitions and workflows for the `krakenkey` CLI. Covers all commands: auth, domain, cert, endpoint, and account.
