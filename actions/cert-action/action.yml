@@ -1,0 +1,137 @@
+name: 'KrakenKey TLS Certificate'
+description: 'Issue, renew, or download TLS certificates from KrakenKey in your CI/CD pipeline'
+author: 'KrakenKey'
+branding:
+  icon: 'lock'
+  color: 'blue'
+
+inputs:
+  api-key:
+    description: 'KrakenKey API key (starts with kk_). Use ${{ secrets.KRAKENKEY_API_KEY }}'
+    required: true
+  api-url:
+    description: 'KrakenKey API base URL'
+    required: false
+    default: 'https://api.krakenkey.io'
+
+  command:
+    description: 'Action to perform: issue, renew, or download'
+    required: false
+    default: 'issue'
+
+  domain:
+    description: 'Primary domain (CN) for the certificate'
+    required: false
+  san:
+    description: 'Additional Subject Alternative Names (comma-separated)'
+    required: false
+    default: ''
+  key-type:
+    description: 'Key type: rsa-2048, rsa-4096, ecdsa-p256, ecdsa-p384'
+    required: false
+    default: 'ecdsa-p256'
+  subject-org:
+    description: 'Organization (O) subject field'
+    required: false
+    default: ''
+  subject-ou:
+    description: 'Organizational Unit (OU) subject field'
+    required: false
+    default: ''
+  subject-country:
+    description: 'Country (C, 2-letter ISO) subject field'
+    required: false
+    default: ''
+  auto-renew:
+    description: 'Enable server-side auto-renewal'
+    required: false
+    default: 'true'
+
+  cert-id:
+    description: 'Certificate ID for renew or download commands'
+    required: false
+
+  wait:
+    description: 'Wait for issuance/renewal to complete'
+    required: false
+    default: 'true'
+  poll-interval:
+    description: 'Poll interval when waiting (Go duration, e.g., 15s)'
+    required: false
+    default: '15s'
+  poll-timeout:
+    description: 'Maximum time to wait for issuance/renewal (Go duration, e.g., 10m)'
+    required: false
+    default: '10m'
+
+  cert-path:
+    description: 'Path to save the certificate PEM'
+    required: false
+    default: './cert.pem'
+  key-path:
+    description: 'Path to save the private key PEM (issue only)'
+    required: false
+    default: './key.pem'
+  csr-path:
+    description: 'Path to save the CSR PEM (issue only)'
+    required: false
+    default: './csr.pem'
+
+  cli-version:
+    description: 'krakenkey-cli version to use (e.g., v0.1.0, or "latest")'
+    required: false
+    default: 'latest'
+
+outputs:
+  cert-id:
+    description: 'Certificate ID'
+  status:
+    description: 'Certificate status (pending, issuing, issued, failed)'
+  domain:
+    description: 'Primary domain (CN)'
+  sans:
+    description: 'Subject Alternative Names (comma-separated)'
+  issuer:
+    description: "Certificate issuer (e.g., \"CN=R11,O=Let's Encrypt,C=US\")"
+  serial-number:
+    description: 'Certificate serial number'
+  expires:
+    description: 'Expiration date (ISO 8601)'
+  fingerprint:
+    description: 'SHA-256 fingerprint'
+  key-type:
+    description: 'Key type used (e.g., ECDSA)'
+  key-size:
+    description: 'Key size (e.g., 256, 2048)'
+  cert-path:
+    description: 'Absolute path to the saved certificate PEM'
+  key-path:
+    description: 'Absolute path to the saved private key PEM (issue only)'
+  csr-path:
+    description: 'Absolute path to the saved CSR PEM (issue only)'
+
+runs:
+  using: 'composite'
+  steps:
+    - id: run
+      shell: bash
+      run: ${{ github.action_path }}/entrypoint.sh
+      env:
+        INPUT_API_KEY: ${{ inputs.api-key }}
+        INPUT_API_URL: ${{ inputs.api-url }}
+        INPUT_COMMAND: ${{ inputs.command }}
+        INPUT_DOMAIN: ${{ inputs.domain }}
+        INPUT_SAN: ${{ inputs.san }}
+        INPUT_KEY_TYPE: ${{ inputs.key-type }}
+        INPUT_SUBJECT_ORG: ${{ inputs.subject-org }}
+        INPUT_SUBJECT_OU: ${{ inputs.subject-ou }}
+        INPUT_SUBJECT_COUNTRY: ${{ inputs.subject-country }}
+        INPUT_AUTO_RENEW: ${{ inputs.auto-renew }}
+        INPUT_CERT_ID: ${{ inputs.cert-id }}
+        INPUT_WAIT: ${{ inputs.wait }}
+        INPUT_POLL_INTERVAL: ${{ inputs.poll-interval }}
+        INPUT_POLL_TIMEOUT: ${{ inputs.poll-timeout }}
+        INPUT_CERT_PATH: ${{ inputs.cert-path }}
+        INPUT_KEY_PATH: ${{ inputs.key-path }}
+        INPUT_CSR_PATH: ${{ inputs.csr-path }}
+        INPUT_CLI_VERSION: ${{ inputs.cli-version }}

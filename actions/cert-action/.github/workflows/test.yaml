@@ -1,0 +1,103 @@
+name: Test
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ShellCheck
+        run: shellcheck entrypoint.sh
+
+  action-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test input validation (missing domain)
+        id: missing-domain
+        continue-on-error: true
+        uses: ./
+        with:
+          api-key: 'kk_test_fake_key'
+          command: 'issue'
+
+      - name: Verify missing domain fails
+        run: |
+          if [ "${{ steps.missing-domain.outcome }}" != "failure" ]; then
+            echo "Expected failure for missing domain"
+            exit 1
+          fi
+
+      - name: Test input validation (invalid command)
+        id: bad-command
+        continue-on-error: true
+        uses: ./
+        with:
+          api-key: 'kk_test_fake_key'
+          command: 'invalid'
+
+      - name: Verify invalid command fails
+        run: |
+          if [ "${{ steps.bad-command.outcome }}" != "failure" ]; then
+            echo "Expected failure for invalid command"
+            exit 1
+          fi
+
+      - name: Test input validation (bad api-key format)
+        id: bad-key
+        continue-on-error: true
+        uses: ./
+        with:
+          api-key: 'not_a_valid_key'
+          command: 'issue'
+          domain: 'example.com'
+
+      - name: Verify bad key format fails
+        run: |
+          if [ "${{ steps.bad-key.outcome }}" != "failure" ]; then
+            echo "Expected failure for bad key format"
+            exit 1
+          fi
+
+      - name: Test input validation (missing cert-id for renew)
+        id: missing-cert-id
+        continue-on-error: true
+        uses: ./
+        with:
+          api-key: 'kk_test_fake_key'
+          command: 'renew'
+
+      - name: Verify missing cert-id fails
+        run: |
+          if [ "${{ steps.missing-cert-id.outcome }}" != "failure" ]; then
+            echo "Expected failure for missing cert-id"
+            exit 1
+          fi
+
+  integration:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Issue test certificate
+        id: cert
+        uses: ./
+        with:
+          api-key: ${{ secrets.KRAKENKEY_STAGING_API_KEY }}
+          api-url: 'https://api-dev.krakenkey.io'
+          domain: 'ci-test.krakenkey.io'
+          key-type: 'ecdsa-p256'
+          cert-path: './test-cert.pem'
+          key-path: './test-key.pem'
+
+      - name: Verify outputs
+        run: |
+          test -n "${{ steps.cert.outputs.cert-id }}"
+          test "${{ steps.cert.outputs.status }}" = "issued"
+          test -f ./test-cert.pem
+          test -f ./test-key.pem
+          openssl x509 -in ./test-cert.pem -noout -subject
