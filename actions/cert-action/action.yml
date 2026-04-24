@@ -7,7 +7,7 @@ branding:
 
 inputs:
   api-key:
-    description: 'KrakenKey API key (starts with kk_). Use ${{ secrets.KRAKENKEY_API_KEY }}'
+    description: 'KrakenKey API key (starts with kk_). Store as KRAKENKEY_API_KEY in repository secrets.'
     required: true
   api-url:
     description: 'KrakenKey API base URL'
@@ -85,30 +85,43 @@ inputs:
 outputs:
   cert-id:
     description: 'Certificate ID'
+    value: ${{ steps.run.outputs.cert-id }}
   status:
     description: 'Certificate status (pending, issuing, issued, failed)'
+    value: ${{ steps.run.outputs.status }}
   domain:
     description: 'Primary domain (CN)'
+    value: ${{ steps.run.outputs.domain }}
   sans:
     description: 'Subject Alternative Names (comma-separated)'
+    value: ${{ steps.run.outputs.sans }}
   issuer:
     description: "Certificate issuer (e.g., \"CN=R11,O=Let's Encrypt,C=US\")"
+    value: ${{ steps.run.outputs.issuer }}
   serial-number:
     description: 'Certificate serial number'
+    value: ${{ steps.run.outputs.serial-number }}
   expires:
     description: 'Expiration date (ISO 8601)'
+    value: ${{ steps.run.outputs.expires }}
   fingerprint:
     description: 'SHA-256 fingerprint'
+    value: ${{ steps.run.outputs.fingerprint }}
   key-type:
     description: 'Key type used (e.g., ECDSA)'
+    value: ${{ steps.run.outputs.key-type }}
   key-size:
     description: 'Key size (e.g., 256, 2048)'
+    value: ${{ steps.run.outputs.key-size }}
   cert-path:
     description: 'Absolute path to the saved certificate PEM'
+    value: ${{ steps.run.outputs.cert-path }}
   key-path:
     description: 'Absolute path to the saved private key PEM (issue only)'
+    value: ${{ steps.run.outputs.key-path }}
   csr-path:
     description: 'Absolute path to the saved CSR PEM (issue only)'
+    value: ${{ steps.run.outputs.csr-path }}
 
 runs:
   using: 'composite'
