@@ -36,3 +36,6 @@ RUN ARCH=$(uname -m) && \
     curl -sSfL "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-${HL_ARCH}" \
       -o /usr/local/bin/hadolint && \
     chmod +x /usr/local/bin/hadolint
+
+# Symlink so /krakenkey works as the workspace path
+RUN ln -s /workspaces/krakenkey /krakenkey
