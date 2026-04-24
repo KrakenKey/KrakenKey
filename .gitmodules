@@ -14,3 +14,7 @@
 	path = probe
 	url = https://github.com/krakenkey/probe.git
 	branch = main
+[submodule "actions/cert-action"]
+	path = actions/cert-action
+	url = https://github.com/krakenkey/cert-action.git
+	branch = main

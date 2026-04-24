@@ -24,6 +24,8 @@ This is a monorepo with git submodules:
   web/              # Marketing site (Astro 5, static, Cloudflare Pages)
   infra/            # Infrastructure (Terraform, Docker Compose, scripts)
   probe/            # TLS endpoint monitoring probe (Go 1.23)
+  actions/          # Custom GitHub Actions
+    cert-action/    # Certificate management GitHub Action
   tools/            # AI agent skill definitions
     krakenkey-api/  # API tool definitions and workflows
     krakenkey-cli/  # CLI tool definitions and workflows
@@ -42,7 +44,7 @@ This is a monorepo with git submodules:
 | API Docs | Swagger/OpenAPI (available at `/swagger-json`) |
 | Marketing | Astro 5, custom CSS |
 | CLI | Go 1.26, manual flag-based routing |
-| Probe | Go 1.23, TLS scanning, SQLite (standalone/buffer), Prometheus metrics |
+| Probe | Go 1.23, TLS scanning, JSON state file |
 | Infra | Terraform (AWS + Cloudflare), Docker Compose |
 | CI/CD | GitHub Actions, GHCR container images |
 
@@ -224,13 +226,19 @@ Expensive operations: cert issuance, renewal, retry, revocation, domain verifica
 | Resource | Free | Starter | Team | Business | Enterprise |
 |----------|------|---------|------|----------|------------|
 | Domains | 3 | 10 | 25 | 75 | unlimited |
+| API keys | 2 | 5 | 10 | 25 | unlimited |
+| Certs/month | 5 | 50 | 250 | 1000 | unlimited |
+| Total active certs | 10 | 75 | 375 | 1500 | unlimited |
+| Concurrent pending | 2 | 5 | 25 | 100 | unlimited |
+| Renewal window | 5d | 30d | 30d | 30d | 30d |
 | Monitored endpoints | 3 | 10 | 50 | 200 | unlimited |
 | Min scan interval | 60m | 30m | 5m | 1m | 1m |
-| Hosted probe regions | - | - | 5 | 15 | unlimited |
-| Hosted endpoints | - | - | 25 | 100 | unlimited |
+| Hosted probe regions | - | 2 | 5 | 15 | unlimited |
+| Hosted endpoints | - | 5 | 25 | 100 | unlimited |
+| Hosted scan interval | - | 30m | 15m | 5m | 1m |
 | Scan result retention | 5d | 30d | 90d | 90d | 90d |
 
-Free and Starter tiers get connected probes only. Hosted monitoring unlocks at Team tier.
+Free tier gets connected probes only. Hosted monitoring starts at Starter tier.
 
 ### Certificate Lifecycle
 
@@ -246,8 +254,8 @@ Issuance is asynchronous via BullMQ. Typical time: 2-5 minutes. Poll `GET /certs
 
 | Mode | Auth | Endpoint Source | Results Storage | Use Case |
 |------|------|----------------|-----------------|----------|
-| standalone | None | Local YAML config | Local SQLite | OSS self-monitoring |
-| connected | User API key (`kk_`) | API or local config | API (SQLite fallback) | Customer self-hosted probe |
+| standalone | None | Local YAML config | Local JSON state | OSS self-monitoring |
+| connected | User API key (`kk_`) | API or local config | API | Customer self-hosted probe |
 | hosted | Service key (`kk_svc_`) | API (by region) | API | KrakenKey-operated infrastructure |
 
 ## CLI Overview
@@ -280,7 +288,7 @@ Config stored at `~/.config/krakenkey/config.yaml`. API key can also be set via 
 | `auth` | login, logout, status, keys (list/create/delete) | Authentication and API key management |
 | `domain` | add, list, show, verify, delete | Domain registration and verification |
 | `cert` | issue, submit, list, show, download, renew, revoke, retry, update, delete | Certificate lifecycle |
-| `endpoint` | add, list, show, enable, disable, delete, region (add/remove) | Endpoint monitoring |
+| `endpoint` | add, list, show, enable, disable, delete, scan, region (add/remove), probe (add/remove) | Endpoint monitoring |
 | `account` | show, plan | Account and subscription info |
 
 ### Output Formats

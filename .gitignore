@@ -6,6 +6,7 @@ infra/
 
 # Internal working directories
 _work/
+internal/
 
 # OS files
 .DS_Store
