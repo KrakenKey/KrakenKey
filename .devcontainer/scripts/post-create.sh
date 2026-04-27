@@ -6,7 +6,7 @@
 
 set -e
 
-DEVCONTAINER_DIR="/workspaces/.devcontainer"
+DEVCONTAINER_DIR="/krakenkey/.devcontainer"
 ENV_DIR="$DEVCONTAINER_DIR/env"
 
 # ─── 1. Ensure api.env exists ───────────────────────────────────────────────
@@ -16,21 +16,23 @@ if [ ! -f "$ENV_DIR/api.env" ]; then
 	cp "$ENV_DIR/api.env.local-defaults" "$ENV_DIR/api.env"
 fi
 
-# ─── 2. Claude Code memory persistence ────────────────────────────────────────
-# Claude Code stores auto-memory in $HOME/.claude/ which doesn't survive container
-# rebuilds. Symlink it into the workspace so it persists via the volume mount.
+# ─── 2. VS Code workspace symlink ─────────────────────────────────────────────
+# VS Code expects the workspace at /workspaces/<name> but this container
+# mounts the repo at /krakenkey. Create a symlink so VS Code can find it.
+if [ ! -e /workspaces/krakenkey ]; then
+  sudo mkdir -p /workspaces
+  sudo ln -s /krakenkey /workspaces/krakenkey
+  sudo chown -h node:node /workspaces/krakenkey
+fi
 
-CLAUDE_WORKSPACE_DIR="/workspaces/.claude"
-CLAUDE_HOME_DIR="${HOME}/.claude"
-
-if [ -d "$CLAUDE_WORKSPACE_DIR" ]; then
-	# Ensure the home directory symlink exists
-	if [ ! -L "$CLAUDE_HOME_DIR" ]; then
-		# Back up any existing non-symlink claude dir
-		[ -d "$CLAUDE_HOME_DIR" ] && mv "$CLAUDE_HOME_DIR" "${CLAUDE_HOME_DIR}.bak"
-		ln -sf "$CLAUDE_WORKSPACE_DIR" "$CLAUDE_HOME_DIR"
-		echo "Linked Claude Code data: $CLAUDE_HOME_DIR -> $CLAUDE_WORKSPACE_DIR"
-	fi
+# ─── 3. Auth persistence (bind-mounted from host) ───────────────────────────
+# ~/.claude and ~/.config/gh are bind-mounted from the host (see
+# docker-compose.yml), so auth tokens survive container rebuilds.
+if [ -d "${HOME}/.claude" ]; then
+	echo "Claude Code data bind-mounted from host at ${HOME}/.claude"
+fi
+if [ -d "${HOME}/.config/gh" ]; then
+	echo "GitHub CLI config bind-mounted from host at ${HOME}/.config/gh"
 fi
 
 # ─── 3. Install yarn dependencies ─────────────────────────────────────────────
@@ -38,10 +40,10 @@ fi
 echo ""
 echo "Installing yarn dependencies..."
 
-cd /workspaces/app/shared && yarn install
-cd /workspaces/app/backend && yarn install
-cd /workspaces/app/frontend && yarn install
-cd /workspaces/web && npm install
+cd /krakenkey/app/shared && yarn install
+cd /krakenkey/app/backend && yarn install
+cd /krakenkey/app/frontend && yarn install
+cd /krakenkey/web && npm install
 
 # ─── 4. Pre-commit hooks ──────────────────────────────────────────────────────
 
@@ -58,8 +60,8 @@ fi
 
 # Install pre-commit into the venv and run the venv's pre-commit binary
 "$PYVENV_DIR/bin/pip" install pre-commit --quiet
-cd /workspaces     && "$PYVENV_DIR/bin/pre-commit" install
-cd /workspaces/app && "$PYVENV_DIR/bin/pre-commit" install
+cd /krakenkey     && "$PYVENV_DIR/bin/pre-commit" install
+cd /krakenkey/app && "$PYVENV_DIR/bin/pre-commit" install
 
 # Ensure new terminals auto-activate the venv (idempotent)
 BASH_RC="${HOME}/.bashrc"
@@ -93,8 +95,8 @@ echo ""
 echo "Post-create setup complete."
 echo ""
 echo "Start the dev servers:"
-echo "  API:      cd /workspaces/app/backend  && yarn start:dev"
-echo "  Frontend: cd /workspaces/app/frontend && yarn dev --host"
+echo "  API:      cd /krakenkey/app/backend  && yarn start:dev"
+echo "  Frontend: cd /krakenkey/app/frontend && yarn dev --host"
 echo ""
 echo "Pre-commit hooks are active — secrets detection and YAML/JSON"
 echo "linting will run automatically on each commit."

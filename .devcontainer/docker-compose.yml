@@ -3,8 +3,6 @@ volumes:
     driver: local
   krakenkey_local_redis:
     driver: local
-  claude_data:
-    driver: local
 
 networks:
   krakenkey-local:
@@ -14,8 +12,8 @@ networks:
 services:
   # Dev workspace — VS Code connects here.
   # Run API and frontend as separate terminal processes:
-  #   cd /workspaces/app/backend  && yarn start:dev
-  #   cd /workspaces/app/frontend && yarn dev --host
+  #   cd /krakenkey/app/backend  && yarn start:dev
+  #   cd /krakenkey/app/frontend && yarn dev --host
   node:
     build:
       context: .
@@ -28,9 +26,10 @@ services:
       - ./env/api-local-overrides.env
       - ./env/web.env
     volumes:
-      - ..:/workspaces
-      - claude_data:/home/node/.claude
-    working_dir: /workspaces
+      - ..:/krakenkey
+      - ${HOME}/.claude:/home/node/.claude
+      - ${HOME}/.config/gh:/home/node/.config/gh
+    working_dir: /krakenkey
     networks:
       - krakenkey-local
     labels:

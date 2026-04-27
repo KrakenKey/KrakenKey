@@ -6,6 +6,12 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ─── 0. Ensure host ~/.claude directory exists for bind mount ─────────────────
+# Claude Code auth + memory are stored here; bind-mounting the host directory
+# means credentials survive container rebuilds and are shared with the host.
+mkdir -p "${HOME}/.claude"
+mkdir -p "${HOME}/.config/gh"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 INFRA_DIR="$ROOT_DIR/infra"
 CERT_DIR="$INFRA_DIR/docker/certs/local"
