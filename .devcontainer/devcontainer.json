@@ -2,7 +2,7 @@
 	"name": "krakenkey-local-dev",
 	"dockerComposeFile": ["./docker-compose.yml"],
 	"service": "node",
-	"workspaceFolder": "/workspaces",
+	"workspaceFolder": "/krakenkey",
 
 	"forwardPorts": [80, 443, 5432, 6379, 8080],
 
@@ -24,7 +24,8 @@
 				"anthropics.claude-code"
 			],
 			"settings": {
-				"terminal.integrated.defaultProfile.linux": "bash"
+				"terminal.integrated.defaultProfile.linux": "bash",
+				"terminal.integrated.cwd": "/krakenkey"
 			}
 		}
 	}
