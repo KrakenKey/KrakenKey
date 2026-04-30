@@ -557,7 +557,7 @@
     },
     {
       "name": "add_hosted_region",
-      "description": "Add a hosted probe region to an endpoint. Requires Team tier or above. Subject to hostedProbeRegions and hostedMonitoredEndpoints plan limits",
+      "description": "Add a hosted probe region to an endpoint. Requires Starter tier or above. Subject to hostedProbeRegions and hostedMonitoredEndpoints plan limits",
       "method": "POST",
       "path": "/endpoints/{id}/regions",
       "auth_required": true,
