@@ -15,7 +15,7 @@ The probe component scans endpoints for TLS certificate status, expiry, chain va
 This is a monorepo with git submodules:
 
 ```
-/workspaces/
+/krakenkey/
   app/              # Core application (submodule)
     backend/        # NestJS 11 REST API (TypeScript)
     frontend/       # React 19 + Vite 7 + Tailwind 4 (TypeScript)
@@ -154,7 +154,7 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | GET | `/endpoints/:id` | Yes | Get endpoint details |
 | PATCH | `/endpoints/:id` | Yes | Update endpoint (sni, label, isActive) |
 | DELETE | `/endpoints/:id` | Yes | Delete endpoint |
-| POST | `/endpoints/:id/regions` | Yes | Add hosted probe region |
+| POST | `/endpoints/:id/regions` | Yes | Add hosted probe region (Starter tier or above) |
 | DELETE | `/endpoints/:id/regions/:region` | Yes | Remove hosted probe region |
 | GET | `/endpoints/:id/results` | Yes | Paginated scan results |
 | GET | `/endpoints/:id/results/latest` | Yes | Latest scan result per probe |
@@ -165,6 +165,7 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | POST | `/certs/tls` | Yes | Submit CSR for issuance |
 | GET | `/certs/tls/:id` | Yes | Get certificate details |
 | GET | `/certs/tls/:id/details` | Yes | Get parsed cert details (issued only) |
+| GET | `/certs/tls/:id/chain` | Yes | Get certificate chain (leaf + intermediates + full chain PEM) |
 | PATCH | `/certs/tls/:id` | Yes | Update cert (e.g., autoRenew toggle) |
 | POST | `/certs/tls/:id/renew` | Yes | Renew certificate |
 | POST | `/certs/tls/:id/retry` | Yes | Retry failed issuance |
@@ -187,6 +188,7 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | POST | `/billing/portal` | Yes | Create Stripe portal session |
 | POST | `/billing/upgrade/preview` | Yes | Preview upgrade cost |
 | POST | `/billing/upgrade` | Yes | Upgrade subscription |
+| POST | `/public/scan` | No | Trigger a public TLS scan (unauthenticated, SSRF-protected, rate-limited) |
 | POST | `/feedback` | Yes | Submit feedback |
 
 "Dual" auth means the endpoint accepts either a user API key (`kk_`) or a service key (`kk_svc_`).
@@ -212,7 +214,7 @@ Validation errors return `message` as an array of strings. Plan limit errors inc
 Tier-aware, tracked by user ID (authenticated) or IP (unauthenticated):
 
 | Tier | Public | Reads | Writes | Expensive |
-|------|--------|-------|--------|-----------|
+|------|--------|-------|--------|----------|
 | free | 30/min | 60/min | 20/min | 5/hr |
 | starter | 60/min | 120/min | 40/min | 10/hr |
 | team | 60/min | 300/min | 60/min | 30/hr |
@@ -249,6 +251,23 @@ issued -> revoking -> revoked (delete possible)
 ```
 
 Issuance is asynchronous via BullMQ. Typical time: 2-5 minutes. Poll `GET /certs/tls/:id` for status.
+
+### Certificate Chain
+
+After issuance, the leaf certificate and intermediate chain are stored separately. Use `GET /certs/tls/:id/chain` to retrieve:
+
+```json
+{
+  "leaf": { "subject": "...", "issuer": "...", "fingerprint": "..." },
+  "intermediates": [
+    { "subject": "...", "issuer": "...", "fingerprint": "..." }
+  ],
+  "chainPem": "-----BEGIN CERTIFICATE-----\n...",
+  "fullChainPem": "-----BEGIN CERTIFICATE-----\n..."
+}
+```
+
+`chainPem` contains intermediates only. `fullChainPem` is leaf + intermediates concatenated (the standard format for most web servers).
 
 ### Probe Modes
 
