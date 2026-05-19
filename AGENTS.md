@@ -15,7 +15,7 @@ The probe component scans endpoints for TLS certificate status, expiry, chain va
 This is a monorepo with git submodules:
 
 ```
-/workspaces/
+/krakenkey/
   app/              # Core application (submodule)
     backend/        # NestJS 11 REST API (TypeScript)
     frontend/       # React 19 + Vite 7 + Tailwind 4 (TypeScript)
@@ -135,6 +135,7 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | GET | `/` | No | API status and version |
 | GET | `/health` | No | Liveness check |
 | GET | `/health/readiness` | No | Readiness (DB, Redis, Authentik) |
+| POST | `/public/scan` | No | Scan a public TLS endpoint (unauthenticated, SSRF-protected, per-IP rate-limited) |
 | GET | `/auth/login` | No | Redirect to Authentik login |
 | GET | `/auth/register` | No | Redirect to Authentik registration |
 | GET | `/auth/callback` | No | OAuth callback (returns tokens) |
@@ -154,7 +155,7 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | GET | `/endpoints/:id` | Yes | Get endpoint details |
 | PATCH | `/endpoints/:id` | Yes | Update endpoint (sni, label, isActive) |
 | DELETE | `/endpoints/:id` | Yes | Delete endpoint |
-| POST | `/endpoints/:id/regions` | Yes | Add hosted probe region |
+| POST | `/endpoints/:id/regions` | Yes | Add hosted probe region (Starter tier+) |
 | DELETE | `/endpoints/:id/regions/:region` | Yes | Remove hosted probe region |
 | GET | `/endpoints/:id/results` | Yes | Paginated scan results |
 | GET | `/endpoints/:id/results/latest` | Yes | Latest scan result per probe |
@@ -165,6 +166,7 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | POST | `/certs/tls` | Yes | Submit CSR for issuance |
 | GET | `/certs/tls/:id` | Yes | Get certificate details |
 | GET | `/certs/tls/:id/details` | Yes | Get parsed cert details (issued only) |
+| GET | `/certs/tls/:id/chain` | Yes | Get leaf and intermediate chain details; returns `chainPem` (intermediates) and `fullChainPem` (leaf + intermediates) |
 | PATCH | `/certs/tls/:id` | Yes | Update cert (e.g., autoRenew toggle) |
 | POST | `/certs/tls/:id/renew` | Yes | Renew certificate |
 | POST | `/certs/tls/:id/retry` | Yes | Retry failed issuance |
@@ -212,7 +214,7 @@ Validation errors return `message` as an array of strings. Plan limit errors inc
 Tier-aware, tracked by user ID (authenticated) or IP (unauthenticated):
 
 | Tier | Public | Reads | Writes | Expensive |
-|------|--------|-------|--------|-----------|
+|------|--------|-------|--------|----------|
 | free | 30/min | 60/min | 20/min | 5/hr |
 | starter | 60/min | 120/min | 40/min | 10/hr |
 | team | 60/min | 300/min | 60/min | 30/hr |
