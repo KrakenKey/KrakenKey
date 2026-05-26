@@ -15,7 +15,7 @@ The probe component scans endpoints for TLS certificate status, expiry, chain va
 This is a monorepo with git submodules:
 
 ```
-/workspaces/
+/krakenkey/
   app/              # Core application (submodule)
     backend/        # NestJS 11 REST API (TypeScript)
     frontend/       # React 19 + Vite 7 + Tailwind 4 (TypeScript)
@@ -135,6 +135,7 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | GET | `/` | No | API status and version |
 | GET | `/health` | No | Liveness check |
 | GET | `/health/readiness` | No | Readiness (DB, Redis, Authentik) |
+| POST | `/public/scan` | No | Public TLS scan (SSRF-protected, per-IP rate-limited) |
 | GET | `/auth/login` | No | Redirect to Authentik login |
 | GET | `/auth/register` | No | Redirect to Authentik registration |
 | GET | `/auth/callback` | No | OAuth callback (returns tokens) |
@@ -154,7 +155,7 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | GET | `/endpoints/:id` | Yes | Get endpoint details |
 | PATCH | `/endpoints/:id` | Yes | Update endpoint (sni, label, isActive) |
 | DELETE | `/endpoints/:id` | Yes | Delete endpoint |
-| POST | `/endpoints/:id/regions` | Yes | Add hosted probe region |
+| POST | `/endpoints/:id/regions` | Yes | Add hosted probe region (Starter tier+) |
 | DELETE | `/endpoints/:id/regions/:region` | Yes | Remove hosted probe region |
 | GET | `/endpoints/:id/results` | Yes | Paginated scan results |
 | GET | `/endpoints/:id/results/latest` | Yes | Latest scan result per probe |
@@ -165,6 +166,7 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | POST | `/certs/tls` | Yes | Submit CSR for issuance |
 | GET | `/certs/tls/:id` | Yes | Get certificate details |
 | GET | `/certs/tls/:id/details` | Yes | Get parsed cert details (issued only) |
+| GET | `/certs/tls/:id/chain` | Yes | Get intermediate chain and full chain PEM |
 | PATCH | `/certs/tls/:id` | Yes | Update cert (e.g., autoRenew toggle) |
 | POST | `/certs/tls/:id/renew` | Yes | Renew certificate |
 | POST | `/certs/tls/:id/retry` | Yes | Retry failed issuance |
@@ -190,6 +192,22 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | POST | `/feedback` | Yes | Submit feedback |
 
 "Dual" auth means the endpoint accepts either a user API key (`kk_`) or a service key (`kk_svc_`).
+
+### Certificate Chain
+
+`GET /certs/tls/:id/chain` returns intermediate chain details alongside the leaf certificate. The response includes `chainPem` (intermediate certificates only) and `fullChainPem` (leaf + intermediates). Most web servers (nginx, HAProxy, Caddy) require the full chain for `ssl_certificate` directives and equivalent settings.
+
+```json
+{
+  "chain": [
+    { "subject": "E6", "issuer": "ISRG Root X1 Gen Y", "fingerprint": "sha256:...", "notAfter": "2035-03-12" }
+  ],
+  "chainPem": "-----BEGIN CERTIFICATE-----\n...",
+  "fullChainPem": "-----BEGIN CERTIFICATE-----\n..."
+}
+```
+
+`chainPem` contains the intermediate(s) only. `fullChainPem` is the leaf certificate prepended to `chainPem`.
 
 ### Error Format
 
@@ -249,6 +267,18 @@ issued -> revoking -> revoked (delete possible)
 ```
 
 Issuance is asynchronous via BullMQ. Typical time: 2-5 minutes. Poll `GET /certs/tls/:id` for status.
+
+### CA/B Forum — Upcoming Changes
+
+**SC-098v2 (passed 2026-05-13):** RFC 8657 CAA parameter extensions (`accounturi`, `validationmethods`) become mandatory for all public CAs by **March 2027**.
+
+KrakenKey uses Let's Encrypt via ACME DNS-01 exclusively. Relevant for agents helping users configure DNS:
+
+- If a domain's CAA record includes `validationmethods`, it must include `dns-01` (e.g., `0 issue "letsencrypt.org; validationmethods=dns-01"`). A record restricting to `http-01` or `tls-alpn-01` only would block issuance via KrakenKey.
+- If a domain's CAA record includes `accounturi`, it must match KrakenKey's registered Let's Encrypt account URI for that domain.
+- CAA records without these parameters are unaffected.
+
+No user action required until the March 2027 enforcement deadline.
 
 ### Probe Modes
 
