@@ -15,7 +15,7 @@ The probe component scans endpoints for TLS certificate status, expiry, chain va
 This is a monorepo with git submodules:
 
 ```
-/workspaces/
+/krakenkey/
   app/              # Core application (submodule)
     backend/        # NestJS 11 REST API (TypeScript)
     frontend/       # React 19 + Vite 7 + Tailwind 4 (TypeScript)
@@ -135,6 +135,7 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | GET | `/` | No | API status and version |
 | GET | `/health` | No | Liveness check |
 | GET | `/health/readiness` | No | Readiness (DB, Redis, Authentik) |
+| POST | `/public/scan` | No | On-demand TLS scan (SSRF-protected, per-IP rate-limited) |
 | GET | `/auth/login` | No | Redirect to Authentik login |
 | GET | `/auth/register` | No | Redirect to Authentik registration |
 | GET | `/auth/callback` | No | OAuth callback (returns tokens) |
@@ -154,7 +155,7 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | GET | `/endpoints/:id` | Yes | Get endpoint details |
 | PATCH | `/endpoints/:id` | Yes | Update endpoint (sni, label, isActive) |
 | DELETE | `/endpoints/:id` | Yes | Delete endpoint |
-| POST | `/endpoints/:id/regions` | Yes | Add hosted probe region |
+| POST | `/endpoints/:id/regions` | Yes | Add hosted probe region (Starter tier+) |
 | DELETE | `/endpoints/:id/regions/:region` | Yes | Remove hosted probe region |
 | GET | `/endpoints/:id/results` | Yes | Paginated scan results |
 | GET | `/endpoints/:id/results/latest` | Yes | Latest scan result per probe |
@@ -165,6 +166,7 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | POST | `/certs/tls` | Yes | Submit CSR for issuance |
 | GET | `/certs/tls/:id` | Yes | Get certificate details |
 | GET | `/certs/tls/:id/details` | Yes | Get parsed cert details (issued only) |
+| GET | `/certs/tls/:id/chain` | Yes | Get intermediate chain PEM and full chain PEM (`chainPem`, `fullChainPem`) |
 | PATCH | `/certs/tls/:id` | Yes | Update cert (e.g., autoRenew toggle) |
 | POST | `/certs/tls/:id/renew` | Yes | Renew certificate |
 | POST | `/certs/tls/:id/retry` | Yes | Retry failed issuance |
@@ -212,7 +214,7 @@ Validation errors return `message` as an array of strings. Plan limit errors inc
 Tier-aware, tracked by user ID (authenticated) or IP (unauthenticated):
 
 | Tier | Public | Reads | Writes | Expensive |
-|------|--------|-------|--------|-----------|
+|------|--------|-------|--------|----------|
 | free | 30/min | 60/min | 20/min | 5/hr |
 | starter | 60/min | 120/min | 40/min | 10/hr |
 | team | 60/min | 300/min | 60/min | 30/hr |
@@ -249,6 +251,19 @@ issued -> revoking -> revoked (delete possible)
 ```
 
 Issuance is asynchronous via BullMQ. Typical time: 2-5 minutes. Poll `GET /certs/tls/:id` for status.
+
+### Certificate Chain
+
+The `GET /certs/tls/:id/chain` endpoint returns two PEM fields alongside leaf certificate details:
+
+| Field | Content |
+|-------|---------|
+| `chainPem` | Intermediate CA certificate(s) only (without the leaf) |
+| `fullChainPem` | Leaf certificate + intermediate CA certificates |
+
+Most web servers (nginx, HAProxy, Caddy) require `fullChainPem` in `ssl_certificate`. The leaf-only PEM from `GET /certs/tls/:id` is for cases where the chain is supplied separately.
+
+**Let's Encrypt Gen Y intermediates (effective 2026-05-13):** All newly issued KrakenKey certificates use E6 (ECDSA P-384) or R11 (RSA 4096) intermediates from the ISRG Root X1/X2 Gen Y hierarchy. Ensure nginx and other servers load `fullChainPem` rather than the leaf-only cert to avoid chain verification failures on older Android and Windows clients.
 
 ### Probe Modes
 
@@ -308,6 +323,26 @@ krakenkey --no-color domain list       # Plain text without ANSI colors
 | `--output` | `KK_OUTPUT` | Output format: text or json |
 | `--no-color` | - | Disable colored output |
 | `--verbose` | - | Enable verbose logging |
+
+## CA/B Forum and PKI Advisories
+
+### SC-098v2 — RFC 8657 CAA Parameters (enforcement: March 2027)
+
+CA/B Forum ballot SC-098v2 passed 2026-05-13. All public CAs must enforce RFC 8657 CAA `accounturi` and `validationmethods` parameter extensions by **March 2027**.
+
+KrakenKey uses Let's Encrypt ACME DNS-01 exclusively. Impact on agent workflows:
+
+- If a domain's CAA record sets `validationmethods`, it must include `dns-01` for issuance to succeed after the enforcement date.
+- If a domain's CAA record sets `accounturi`, it must match KrakenKey's registered Let's Encrypt account URI.
+- CAA records without these parameters are unaffected.
+
+Agents that configure DNS CAA records should include `dns-01` in `validationmethods` if the parameter is present.
+
+### Chrome EKU Separation (effective June 15, 2026)
+
+Chrome Root Program Policy v1.8 (effective June 15, 2026) requires TLS intermediate CA certificates to carry only `serverAuth` in the extended key usage (EKU) extension. Intermediates that also include `clientAuth` are no longer permitted for newly issued public TLS certificates. Commercial CAs (DigiCert, Sectigo) retired their multi-purpose G2/G3 intermediates in May/June 2026.
+
+**KrakenKey and Let's Encrypt are not affected.** Let's Encrypt intermediates (E5, E6, R10, R11) have always been dedicated TLS-only and have never included `clientAuth`. Certificates issued through KrakenKey via Let's Encrypt are fully compliant with this policy.
 
 ## Key Patterns
 
