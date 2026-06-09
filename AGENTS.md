@@ -15,7 +15,7 @@ The probe component scans endpoints for TLS certificate status, expiry, chain va
 This is a monorepo with git submodules:
 
 ```
-/workspaces/
+/krakenkey/
   app/              # Core application (submodule)
     backend/        # NestJS 11 REST API (TypeScript)
     frontend/       # React 19 + Vite 7 + Tailwind 4 (TypeScript)
@@ -135,6 +135,7 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | GET | `/` | No | API status and version |
 | GET | `/health` | No | Liveness check |
 | GET | `/health/readiness` | No | Readiness (DB, Redis, Authentik) |
+| POST | `/public/scan` | No | On-demand TLS scan proxy (SSRF-protected, per-IP rate-limited) |
 | GET | `/auth/login` | No | Redirect to Authentik login |
 | GET | `/auth/register` | No | Redirect to Authentik registration |
 | GET | `/auth/callback` | No | OAuth callback (returns tokens) |
@@ -154,7 +155,7 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | GET | `/endpoints/:id` | Yes | Get endpoint details |
 | PATCH | `/endpoints/:id` | Yes | Update endpoint (sni, label, isActive) |
 | DELETE | `/endpoints/:id` | Yes | Delete endpoint |
-| POST | `/endpoints/:id/regions` | Yes | Add hosted probe region |
+| POST | `/endpoints/:id/regions` | Yes | Add hosted probe region (Starter tier+) |
 | DELETE | `/endpoints/:id/regions/:region` | Yes | Remove hosted probe region |
 | GET | `/endpoints/:id/results` | Yes | Paginated scan results |
 | GET | `/endpoints/:id/results/latest` | Yes | Latest scan result per probe |
@@ -165,6 +166,7 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | POST | `/certs/tls` | Yes | Submit CSR for issuance |
 | GET | `/certs/tls/:id` | Yes | Get certificate details |
 | GET | `/certs/tls/:id/details` | Yes | Get parsed cert details (issued only) |
+| GET | `/certs/tls/:id/chain` | Yes | Certificate chain details (chainPem, fullChainPem) |
 | PATCH | `/certs/tls/:id` | Yes | Update cert (e.g., autoRenew toggle) |
 | POST | `/certs/tls/:id/renew` | Yes | Renew certificate |
 | POST | `/certs/tls/:id/retry` | Yes | Retry failed issuance |
@@ -250,6 +252,18 @@ issued -> revoking -> revoked (delete possible)
 
 Issuance is asynchronous via BullMQ. Typical time: 2-5 minutes. Poll `GET /certs/tls/:id` for status.
 
+### Certificate Chain
+
+`GET /certs/tls/:id/chain` returns chain details for any issued certificate:
+
+| Field | Description |
+|-------|-------------|
+| `entries` | Array — subject, issuer, fingerprint, notAfter for each intermediate |
+| `chainPem` | PEM-encoded intermediate chain (intermediates only) |
+| `fullChainPem` | PEM-encoded full chain (leaf + intermediates) |
+
+Use `chainPem` for nginx `ssl_trusted_certificate` and `fullChainPem` for HAProxy or any server requiring leaf + intermediates in one file.
+
 ### Probe Modes
 
 | Mode | Auth | Endpoint Source | Results Storage | Use Case |
@@ -257,6 +271,28 @@ Issuance is asynchronous via BullMQ. Typical time: 2-5 minutes. Poll `GET /certs
 | standalone | None | Local YAML config | Local JSON state | OSS self-monitoring |
 | connected | User API key (`kk_`) | API or local config | API | Customer self-hosted probe |
 | hosted | Service key (`kk_svc_`) | API (by region) | API | KrakenKey-operated infrastructure |
+
+## CA/B Forum and PKI Advisories
+
+### SC-098v2 — CAA Parameters (RFC 8657, enforcement March 2027)
+
+CA/B Forum Ballot SC-098v2 will require `accounturi` and `validationmethods` CAA parameters for all new certificate issuances from March 2027. KrakenKey uses Let's Encrypt with `dns-01` challenges:
+
+- Add `accounturi` (your ACME account URL) and `validationmethods=dns-01` to your CAA records before March 2027.
+- Existing certificates renew without issue until the March 2027 enforcement date.
+- See [RFC 8657](https://www.rfc-editor.org/rfc/rfc8657) for CAA parameter syntax.
+
+### Chrome Root Program Policy v1.8 — EKU Separation (effective 2026-06-15)
+
+Section 1.3.2: public TLS intermediates must carry only the `serverAuth` EKU from 2026-06-15. DigiCert and Sectigo intermediates with combined `serverAuth` + `clientAuth` EKUs require re-issuance.
+
+Let's Encrypt E5/E6/R10/R11 intermediates are already compliant. KrakenKey-issued certificates are unaffected.
+
+### Chrome Root Program Policy v1.8 — CT Mandatory Logging (effective 2026-06-15)
+
+Section 1.3.4.1: all public TLS certificates must be logged to a Certificate Transparency log before issuance. DigiCert removed CT opt-out settings from CertCentral on 2026-06-01. Chrome's enforcement deadline is 2026-06-15.
+
+Let's Encrypt logs all certificates to CT by default. KrakenKey-issued certificates are already compliant. Certificate hostnames and SAN values are permanently public record in CT logs — this is by design for all publicly-trusted certificates.
 
 ## CLI Overview
 
