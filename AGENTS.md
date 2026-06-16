@@ -15,7 +15,7 @@ The probe component scans endpoints for TLS certificate status, expiry, chain va
 This is a monorepo with git submodules:
 
 ```
-/workspaces/
+/krakenkey/
   app/              # Core application (submodule)
     backend/        # NestJS 11 REST API (TypeScript)
     frontend/       # React 19 + Vite 7 + Tailwind 4 (TypeScript)
@@ -138,6 +138,7 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | GET | `/auth/login` | No | Redirect to Authentik login |
 | GET | `/auth/register` | No | Redirect to Authentik registration |
 | GET | `/auth/callback` | No | OAuth callback (returns tokens) |
+| POST | `/public/scan` | No | Proxy TLS scan request to hosted probe. SSRF-protected (private IPs blocked), per-IP rate-limited. Body: `{ host, port }`. |
 | GET | `/auth/profile` | Yes | Current user profile with resource counts |
 | PATCH | `/auth/profile` | Yes | Update profile / notification prefs |
 | GET | `/auth/api-keys` | Yes | List API keys |
@@ -154,7 +155,7 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | GET | `/endpoints/:id` | Yes | Get endpoint details |
 | PATCH | `/endpoints/:id` | Yes | Update endpoint (sni, label, isActive) |
 | DELETE | `/endpoints/:id` | Yes | Delete endpoint |
-| POST | `/endpoints/:id/regions` | Yes | Add hosted probe region |
+| POST | `/endpoints/:id/regions` | Yes | Add hosted probe region (Starter tier+) |
 | DELETE | `/endpoints/:id/regions/:region` | Yes | Remove hosted probe region |
 | GET | `/endpoints/:id/results` | Yes | Paginated scan results |
 | GET | `/endpoints/:id/results/latest` | Yes | Latest scan result per probe |
@@ -165,6 +166,7 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | POST | `/certs/tls` | Yes | Submit CSR for issuance |
 | GET | `/certs/tls/:id` | Yes | Get certificate details |
 | GET | `/certs/tls/:id/details` | Yes | Get parsed cert details (issued only) |
+| GET | `/certs/tls/:id/chain` | Yes | Intermediate chain details + `chainPem` (intermediates) + `fullChainPem` (leaf + intermediates) |
 | PATCH | `/certs/tls/:id` | Yes | Update cert (e.g., autoRenew toggle) |
 | POST | `/certs/tls/:id/renew` | Yes | Renew certificate |
 | POST | `/certs/tls/:id/retry` | Yes | Retry failed issuance |
@@ -212,7 +214,7 @@ Validation errors return `message` as an array of strings. Plan limit errors inc
 Tier-aware, tracked by user ID (authenticated) or IP (unauthenticated):
 
 | Tier | Public | Reads | Writes | Expensive |
-|------|--------|-------|--------|-----------|
+|------|--------|-------|--------|----------|
 | free | 30/min | 60/min | 20/min | 5/hr |
 | starter | 60/min | 120/min | 40/min | 10/hr |
 | team | 60/min | 300/min | 60/min | 30/hr |
@@ -249,6 +251,29 @@ issued -> revoking -> revoked (delete possible)
 ```
 
 Issuance is asynchronous via BullMQ. Typical time: 2-5 minutes. Poll `GET /certs/tls/:id` for status.
+
+### Certificate Chain
+
+The `GET /certs/tls/:id/chain` endpoint returns intermediate CA chain details for an issued certificate:
+
+```json
+{
+  "certId": "uuid",
+  "chainEntries": [
+    {
+      "subject": "CN=E6, O=Let's Encrypt, C=US",
+      "issuer": "CN=ISRG Root X1 Gen Y, O=Internet Security Research Group, C=US",
+      "notAfter": "2035-06-15T00:00:00.000Z",
+      "fingerprint": "sha256:..."
+    }
+  ],
+  "chainPem": "-----BEGIN CERTIFICATE-----\n...",
+  "fullChainPem": "-----BEGIN CERTIFICATE-----\n...\n-----BEGIN CERTIFICATE-----\n..."
+}
+```
+
+- `chainPem` — intermediates only (use for servers that manage the chain separately)
+- `fullChainPem` — leaf + intermediates (use for nginx `ssl_certificate`, HAProxy `bind crt`, most web servers)
 
 ### Probe Modes
 
@@ -333,3 +358,31 @@ See [tools/](tools/) for structured skill definitions that AI agents can use:
 
 - **[krakenkey-api](tools/krakenkey-api/)** -- Tool definitions and workflows for the KrakenKey REST API. Covers all endpoints including endpoint monitoring, probe management, certificate lifecycle, domain verification, billing, and organizations.
 - **[krakenkey-cli](tools/krakenkey-cli/)** -- Tool definitions and workflows for the `krakenkey` CLI. Covers all commands: auth, domain, cert, endpoint, and account.
+
+## CA/B Forum and PKI Advisories
+
+Advisory notes on CA/Browser Forum policy and PKI changes affecting KrakenKey's certificate infrastructure.
+
+### SC-098v2 — CAA RFC 8657 Parameters
+
+CA/B Forum ballot SC-098v2 passed 2026-05-13. All public CAs must enforce RFC 8657 CAA `accounturi` and `validationmethods` parameter extensions by **March 2027**.
+
+If a domain's CAA record sets `validationmethods`, it must include `dns-01` for Let's Encrypt ACME DNS-01 issuance to succeed after enforcement. CAA records without these parameters are unaffected.
+
+### Chrome EKU Separation
+
+**Enforced 2026-06-15.** TLS server intermediates may no longer carry `clientAuth` EKU alongside `serverAuth`. DigiCert and Sectigo retired multi-purpose intermediates. Let's Encrypt E5/E6/R10/R11 intermediates were already `serverAuth`-only; KrakenKey certificate issuance is unaffected.
+
+### CT Mandatory Logging
+
+**Enforced 2026-06-15** (Chrome Root Program Policy v1.8 §1.3.4.1). DigiCert removed CT opt-out from CertCentral on 2026-06-01. Let's Encrypt has always logged all certificates; KrakenKey issuance was already compliant.
+
+Agents should note: any domain or hostname on a publicly-trusted certificate is now permanently visible in public CT logs (crt.sh). There is no opt-out. If issuing certificates for internal hostnames via a public CA, those hostnames are in CT log history.
+
+### Let's Encrypt Merkle Tree Certificates (Post-Quantum Path)
+
+Let's Encrypt announced on **2026-06-03** that their post-quantum issuance path will use Merkle Tree Certificates (MTC), not ML-DSA X.509 (RFC 9881). MTC uses Merkle inclusion proofs instead of a certificate chain.
+
+**Timeline:** MTC staging planned late 2026, production 2027.
+
+The `GET /certs/tls/:id/chain` endpoint, `chainPem`, and `fullChainPem` fields apply to the current X.509 chain model and will not translate directly to MTC-issued certificates once that path goes live. Monitor [letsencrypt.org](https://letsencrypt.org) for updates on the MTC specification and CA/B Forum policy.
