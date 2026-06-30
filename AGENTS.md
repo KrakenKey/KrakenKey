@@ -15,7 +15,7 @@ The probe component scans endpoints for TLS certificate status, expiry, chain va
 This is a monorepo with git submodules:
 
 ```
-/workspaces/
+/krakenkey/
   app/              # Core application (submodule)
     backend/        # NestJS 11 REST API (TypeScript)
     frontend/       # React 19 + Vite 7 + Tailwind 4 (TypeScript)
@@ -35,7 +35,7 @@ This is a monorepo with git submodules:
 ## Tech Stack
 
 | Layer | Technology |
-|-------|-----------|
+|-------|----------|
 | Backend | NestJS 11, TypeORM, BullMQ (Redis), acme-client |
 | Frontend | React 19, Vite 7, Tailwind 4, Axios |
 | Database | PostgreSQL 18 |
@@ -135,6 +135,7 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | GET | `/` | No | API status and version |
 | GET | `/health` | No | Liveness check |
 | GET | `/health/readiness` | No | Readiness (DB, Redis, Authentik) |
+| POST | `/public/scan` | No | Free TLS scan proxy to the hosted probe; SSRF-protected (private IP ranges blocked), per-IP rate-limited |
 | GET | `/auth/login` | No | Redirect to Authentik login |
 | GET | `/auth/register` | No | Redirect to Authentik registration |
 | GET | `/auth/callback` | No | OAuth callback (returns tokens) |
@@ -154,7 +155,7 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | GET | `/endpoints/:id` | Yes | Get endpoint details |
 | PATCH | `/endpoints/:id` | Yes | Update endpoint (sni, label, isActive) |
 | DELETE | `/endpoints/:id` | Yes | Delete endpoint |
-| POST | `/endpoints/:id/regions` | Yes | Add hosted probe region |
+| POST | `/endpoints/:id/regions` | Yes | Add hosted probe region (Starter tier+) |
 | DELETE | `/endpoints/:id/regions/:region` | Yes | Remove hosted probe region |
 | GET | `/endpoints/:id/results` | Yes | Paginated scan results |
 | GET | `/endpoints/:id/results/latest` | Yes | Latest scan result per probe |
@@ -165,6 +166,7 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | POST | `/certs/tls` | Yes | Submit CSR for issuance |
 | GET | `/certs/tls/:id` | Yes | Get certificate details |
 | GET | `/certs/tls/:id/details` | Yes | Get parsed cert details (issued only) |
+| GET | `/certs/tls/:id/chain` | Yes | Intermediate CA chain: entries with subject/issuer/fingerprint/notAfter; `chainPem` (intermediates only); `fullChainPem` (leaf + intermediates) |
 | PATCH | `/certs/tls/:id` | Yes | Update cert (e.g., autoRenew toggle) |
 | POST | `/certs/tls/:id/renew` | Yes | Renew certificate |
 | POST | `/certs/tls/:id/retry` | Yes | Retry failed issuance |
@@ -206,6 +208,30 @@ All errors follow this structure:
 ```
 
 Validation errors return `message` as an array of strings. Plan limit errors include `code: "plan_limit_exceeded"`, `limit`, `current`, and `plan` fields.
+
+### Certificate Chain
+
+`GET /certs/tls/:id/chain` returns a `chain` array of intermediate entries and two PEM fields:
+
+- **`chainPem`** — intermediate certificates only (no leaf). Use when your server needs the chain separate from the leaf (e.g. nginx `ssl_trusted_certificate`).
+- **`fullChainPem`** — leaf + all intermediates concatenated. The standard format for most web servers (nginx `ssl_certificate`, HAProxy `crt`).
+
+```json
+{
+  "chain": [
+    {
+      "subject": "CN=E6,O=Let's Encrypt,C=US",
+      "issuer": "CN=ISRG Root X2,O=Internet Security Research Group,C=US",
+      "fingerprint": "sha256:ab12...",
+      "notAfter": "2027-03-12T23:59:59Z"
+    }
+  ],
+  "chainPem": "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----\n",
+  "fullChainPem": "-----BEGIN CERTIFICATE-----\n[leaf]\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\n[intermediate]\n-----END CERTIFICATE-----\n"
+}
+```
+
+> **LE Merkle Tree Certificates (2027):** Let's Encrypt announced MTC on 2026-06-03. MTC breaks the traditional `chain.pem`/`fullchain.pem` model. This endpoint and its consumers (CLI `--chain-out`, cert-action `chain-path`) will need updates before the LE production rollout.
 
 ### Rate Limiting
 
@@ -326,6 +352,19 @@ krakenkey --no-color domain list       # Plain text without ANSI colors
 ## Writing Style
 
 When generating user-facing content: avoid em dashes, "delve", "leverage", "elevate", "streamline", "robust", "seamless", and other patterns commonly associated with AI-generated text. Write naturally and directly.
+
+## CA/B Forum and PKI Advisories
+
+Ecosystem changes tracked for operational impact on this platform:
+
+| Advisory | Status | Platform Impact | Deadline |
+|----------|--------|-----------------|----------|
+| SC-098v2 — CAA RFC 8657 Parameters | Passed; CA enforcement pending | CAA records may need `validationmethods`/`accounturi` parameters added; Let's Encrypt unaffected today | March 2027 |
+| Chrome EKU Separation | Enforced 2026-06-15 | DigiCert/Sectigo chains affected; Let's Encrypt unaffected | Shipped |
+| CT Mandatory Logging | Enforced 2026-06-15 | DigiCert opt-out removed 2026-06-01; Let's Encrypt always CT-logged | Shipped |
+| LE Merkle Tree Certificates | Announced 2026-06-03; LE staging late 2026 | Breaks `chain.pem`/`fullchain.pem` model; cert-action, CLI, and chain endpoint need updates before LE production rollout | Production 2027 |
+
+See [infra-int/docs/LETSENCRYPT_NOTES.md](https://github.com/krakenkey/infra-int/blob/main/docs/LETSENCRYPT_NOTES.md) for full technical notes.
 
 ## AI Agent Skills
 
