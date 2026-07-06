@@ -42,22 +42,6 @@ The OIDC login flow does not implement refresh tokens. When the session token ex
 
 Expired API keys are rejected at validation time, but there is no background job to notify users about upcoming or recently expired keys.
 
-### Single role model
-
-All authenticated users have identical permissions. There is no role-based access control, organization, or team concept.
-
-**Planned**
-
----
-
-## Rate Limiting
-
-### All users are on the free tier
-
-The tier-aware rate limiter is fully implemented with multiple tiers, but there is currently no subscription system to assign users to higher tiers.
-
-**Planned**
-
 ---
 
 ## Domain Verification
@@ -65,26 +49,6 @@ The tier-aware rate limiter is fully implemented with multiple tiers, but there 
 ### Transient DNS failures can revoke domain verification
 
 Daily re-verification marks a domain as unverified if the TXT record lookup fails, including due to transient DNS errors. There is no retry or grace period.
-
----
-
-## Notifications
-
-### No email notifications
-
-Users are not notified about certificate expiry, issuance completion, issuance failure, or domain verification changes. All status checks require polling the API or checking the dashboard.
-
-**Planned**
-
----
-
-## Observability
-
-### No metrics or monitoring
-
-There is no Prometheus metrics endpoint, Grafana dashboard, or alerting. System health is limited to the `/health` endpoint.
-
-**Planned**
 
 ---
 
