@@ -31,10 +31,17 @@ Private keys never leave your device. CSRs are generated client-side using the W
 - **Client-side CSR generation** -- WebCrypto API in the browser; private keys stay on your device
 - **ACME automation** -- Let's Encrypt certificate issuance via DNS-01 challenges
 - **DNS provider agnostic** -- one-time CNAME delegation; works with any registrar
+- **Endpoint monitoring** -- TLS health checks (expiry, chain validity, cipher suites, protocol versions, OCSP, handshake latency) with scan result export
+- **Self-hosted probe** -- open-source Go binary with standalone, connected, and hosted modes
+- **Auto-renewal** -- daily expiry checks with tier-aware renewal windows and email notifications
+- **Email notifications** -- cert issued/renewed/failed/revoked, expiry warnings, domain verification alerts
+- **Organizations & RBAC** -- teams with owner, admin, member, viewer roles
+- **Subscription billing** -- Stripe-powered tiers (Free, Starter, Team) with plan limit enforcement
+- **Go CLI** -- full API parity with local CSR generation (`krakenkey cert issue`, `cert renew`, etc.)
+- **GitHub Action** -- cert-action for CI/CD certificate issuance, renewal, and download
 - **REST API** -- every dashboard action is available programmatically
 - **Web dashboard** -- visual certificate lifecycle management
-- **Domain verification** -- DNS TXT record ownership proof with daily re-verification
-- **Auto-renewal monitoring** -- daily expiry checks, automatic renewal at 30 days
+- **Prometheus metrics** -- 12+ gauges and counters for observability
 - **API key authentication** -- persistent keys for CI/CD and automation workflows
 - **Tier-aware rate limiting** -- configurable per-tier throttling on all endpoints
 - **Swagger/OpenAPI docs** -- interactive API documentation
@@ -96,18 +103,26 @@ See the full [API Reference](app/backend/docs/API_REFERENCE.md) for all endpoint
 ## Architecture
 
 ```
-Browser / CLI
+Browser / CLI / GitHub Action
       |
       v
   NestJS REST API
       |
-      +---> PostgreSQL (certs, domains, users)
+      +---> PostgreSQL (certs, domains, users, endpoints, orgs, subscriptions)
       +---> Redis / BullMQ (async job queue)
       +---> ACME Client (Let's Encrypt)
       +---> DNS (challenge resolution on KrakenKey infra)
+      +---> Stripe (billing, subscriptions)
+      +---> Authentik (SSO / OIDC)
+      +---> Prometheus (/metrics)
+      |
+  Probes (standalone / connected / hosted)
+      |
+      +---> TLS endpoint scanning
+      +---> Scan results --> API
 ```
 
-Certificate issuance is asynchronous. Submitting a CSR enqueues a BullMQ job that handles the ACME flow (create order, set DNS challenge, poll propagation, finalize) and stores the issued certificate. Jobs retry with exponential backoff on failure.
+Certificate issuance is asynchronous. Submitting a CSR enqueues a BullMQ job that handles the ACME flow (create order, set DNS challenge, poll propagation, finalize) and stores the issued certificate. Jobs retry with exponential backoff on failure. Endpoint monitoring runs via self-hosted probes that scan TLS endpoints and report results back to the API.
 
 ### Tech Stack
 
