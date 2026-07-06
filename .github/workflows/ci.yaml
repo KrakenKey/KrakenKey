@@ -1,0 +1,33 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      # gitleaks is skipped here because the hook expects the binary from the
+      # devcontainer image. Secret scanning in CI is tracked in IMPROVEMENT_PLAN.md.
+      - name: Run pre-commit hooks
+        run: |
+          pip install pre-commit
+          SKIP=gitleaks pre-commit run --all-files --show-diff-on-failure
+
+  submodule-integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Verify gitlinks exist for every .gitmodules entry
+        run: |
+          status=0
+          while read -r _ path; do
+            if ! git ls-tree HEAD "$path" | grep -q '^160000'; then
+              echo "::error::submodule path '$path' in .gitmodules has no gitlink in HEAD"
+              status=1
+            fi
+          done < <(git config -f .gitmodules --get-regexp 'submodule\..*\.path')
+          exit $status
