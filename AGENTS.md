@@ -15,7 +15,7 @@ The probe component scans endpoints for TLS certificate status, expiry, chain va
 This is a monorepo with git submodules:
 
 ```
-/workspaces/
+/krakenkey/
   app/              # Core application (submodule)
     backend/        # NestJS 11 REST API (TypeScript)
     frontend/       # React 19 + Vite 7 + Tailwind 4 (TypeScript)

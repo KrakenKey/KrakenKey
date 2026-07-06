@@ -42,10 +42,10 @@ Add to `/etc/hosts` (Linux/Mac) or `C:\Windows\System32\drivers\etc\hosts` (Wind
 
 ```bash
 # Terminal 1 — API (NestJS with hot reload)
-cd /workspaces/app/backend && yarn start:dev
+cd /krakenkey/app/backend && yarn start:dev
 
 # Terminal 2 — Frontend (Vite with HMR)
-cd /workspaces/app/frontend && yarn dev --host
+cd /krakenkey/app/frontend && yarn dev --host
 ```
 
 5. Browse to **https://dev.krakenkey.io**
