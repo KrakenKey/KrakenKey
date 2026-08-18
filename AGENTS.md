@@ -154,7 +154,7 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | GET | `/endpoints/:id` | Yes | Get endpoint details |
 | PATCH | `/endpoints/:id` | Yes | Update endpoint (sni, label, isActive) |
 | DELETE | `/endpoints/:id` | Yes | Delete endpoint |
-| POST | `/endpoints/:id/regions` | Yes | Add hosted probe region |
+| POST | `/endpoints/:id/regions` | Yes | Add hosted probe region (Starter tier+) |
 | DELETE | `/endpoints/:id/regions/:region` | Yes | Remove hosted probe region |
 | GET | `/endpoints/:id/results` | Yes | Paginated scan results |
 | GET | `/endpoints/:id/results/latest` | Yes | Latest scan result per probe |
@@ -165,11 +165,13 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | POST | `/certs/tls` | Yes | Submit CSR for issuance |
 | GET | `/certs/tls/:id` | Yes | Get certificate details |
 | GET | `/certs/tls/:id/details` | Yes | Get parsed cert details (issued only) |
+| GET | `/certs/tls/:id/chain` | Yes | Get intermediate chain details; `chainPem` and `fullChainPem` |
 | PATCH | `/certs/tls/:id` | Yes | Update cert (e.g., autoRenew toggle) |
 | POST | `/certs/tls/:id/renew` | Yes | Renew certificate |
 | POST | `/certs/tls/:id/retry` | Yes | Retry failed issuance |
 | POST | `/certs/tls/:id/revoke` | Yes | Revoke certificate |
 | DELETE | `/certs/tls/:id` | Yes | Delete failed/revoked cert |
+| POST | `/public/scan` | No | On-demand TLS scan; SSRF-protected, per-IP rate-limited |
 | GET | `/users` | Yes | List users (admin only) |
 | GET | `/users/:id` | Yes | Get user |
 | PATCH | `/users/:id` | Yes | Update user |
@@ -250,6 +252,35 @@ issued -> revoking -> revoked (delete possible)
 
 Issuance is asynchronous via BullMQ. Typical time: 2-5 minutes. Poll `GET /certs/tls/:id` for status.
 
+### Certificate Chain
+
+`GET /certs/tls/:id/chain` returns the intermediate CA chain for an issued cert:
+
+```json
+{
+  "chain": [
+    { "subject": "...", "issuer": "...", "fingerprint": "...", "notAfter": "..." }
+  ],
+  "chainPem": "-----BEGIN CERTIFICATE-----...",
+  "fullChainPem": "-----BEGIN CERTIFICATE-----..."
+}
+```
+
+`chainPem` is intermediates only; `fullChainPem` is leaf + intermediates. Most web servers (nginx, Caddy, HAProxy) expect `fullChainPem`. The CLI (`--fullchain-out`) and GitHub Action (`fullchain-path`) both expose this same distinction.
+
+### PKI Advisories
+
+Developments in the public CA/browser ecosystem relevant to agents working on cert issuance or DNS automation:
+
+- **SC-098v2 (CAA RFC 8657)** — CA enforcement of `accounturi`/`validationmethods` CAA parameters is mandatory from March 2027. If a user's CAA record sets `validationmethods`, it must include `dns-01` for KrakenKey issuance to keep working.
+- **Chrome EKU separation** — enforced 2026-06-15; public serverAuth/clientAuth intermediates split. Let's Encrypt (KrakenKey's issuer) is unaffected.
+- **CT mandatory logging** — enforced 2026-06-15; all publicly-trusted certs are CT-logged with no opt-out. Already true for Let's Encrypt certs KrakenKey issues.
+- **Let's Encrypt Merkle Tree Certificates** — announced 2026-06-03 as LE's post-quantum issuance path; staging late 2026, production 2027. MTC does not use the `chain.pem`/`fullchain.pem` model above — `GetCertChain()`, the CLI chain flags, and the GitHub Action `chain-path`/`fullchain-path` outputs will need a compatibility pass before LE's production MTC rollout.
+- **Mozilla Root Store Policy v3.1** — effective 2026-07-01; adds mass revocation planning (ballot SC-089), CP/CPS documentation, and a five-year root key age cap. No direct action needed for KrakenKey as a Let's Encrypt subscriber, but relevant context if evaluating additional CAs.
+- **HARICA CP/CPS drift, two chained mass revocations** — July 2026: an `id-kp-clientAuth` EKU compliance lapse forced 66,105 cert revocations (July 20), followed by a missing OCSP AIA pointer incident forcing mass replacement by July 25. Not KrakenKey's issuer (Let's Encrypt), but the operational pattern is directly relevant here: OCSP stapling and mTLS break on affected certs, and ACME clients with ARI support (RFC 9773) absorb forced CA-initiated renewal far better than clients polling on a static schedule. Worth revisiting if KrakenKey ever adds ARI awareness to its own renewal polling. Tracked in web PR #42.
+- **FreeRDP TLS certificate validation bypass (CVE-2026-66402)** — fixed in FreeRDP 3.29.0 (August 1, 2026): three flaws in FreeRDP's server-certificate matching (embedded-NUL SAN truncation, a CN fallback that ignores a non-matching SAN, and IP-literal targets checked against DNS SAN instead of `iPAddress` SAN) let a certificate that doesn't match the target host pass validation. Not a KrakenKey issuance defect — the bug is client-side matching logic, and correct issuance can't compensate for it — but relevant if any docs or examples ever point users at FreeRDP-based gateways (e.g., Guacamole, Remmina) using KrakenKey-issued certs. Tracked in web PR #44.
+- **SC100 (DNSSEC validation consolidation)** — CA/Browser Forum ballot passed 2026-08-06; consolidates scattered DNSSEC validation language into BR Section 4.2.2.2 and clarifies that mandatory DNSSEC validation applies only to a CA's Primary Network Perspective, not the Remote Network Perspectives used for Multi-Perspective Issuance Corroboration. No behavior change for CAs — a reorganization and clarification of the existing SC-085v2 requirement (mandatory since March 2026). Relevant context if a user reports a DNS-01 renewal failure on a DNSSEC-signed zone: a `SERVFAIL` from the CA's primary perspective (e.g., during a DS/DNSKEY rollover) is a hard issuance block regardless of what other perspectives observe. Tracked in web PR #46.
+
 ### Probe Modes
 
 | Mode | Auth | Endpoint Source | Results Storage | Use Case |
@@ -279,7 +310,7 @@ krakenkey auth status                     # Show current user
 krakenkey auth logout                     # Remove stored key
 ```
 
-Config stored at `~/.config/krakenkey/config.yaml`. API key can also be set via `KK_API_KEY` env var.
+Config stored at `~/.config/krakenkey/config.yaml`. API key can also be set via `KK_API_KEY` env var. On non-Windows systems, the CLI refuses to load or save the config file if its permissions are broader than `0600` (fix: `chmod 600 ~/.config/krakenkey/config.yaml`).
 
 ### Commands
 
