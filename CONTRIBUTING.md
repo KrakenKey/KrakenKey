@@ -33,6 +33,16 @@ code .
 
 When prompted, click **Reopen in Container**. The devcontainer starts PostgreSQL, Redis, Traefik, and installs all dependencies automatically.
 
+### Submodules vs. nested repositories
+
+Not every directory in the checkout is a submodule, and the distinction matters when you commit:
+
+- **Submodules** (`app/`, `web/`, `cli/`, `probe/`, `actions/cert-action/`, `examples/`) are registered in `.gitmodules`. `--recurse-submodules` clones them, and changes land as a gitlink pointer bump in this repo plus a commit in the submodule's own repo.
+- **Nested repositories** (`infra/`, `internal/`) are independent git repositories that happen to sit inside the checkout. They are listed in `.gitignore`, are **not** in `.gitmodules`, and are not cloned by `--recurse-submodules` — you clone them separately. This repo tracks nothing about them, so commits there are invisible to superrepo tooling.
+- A few KrakenKey repositories are not in the checkout at all and are cloned standalone: [`infra-int`](https://github.com/krakenkey/infra-int) (internal infrastructure docs and Terraform) and [`terraform-provider-krakenkey`](https://github.com/krakenkey/terraform-provider-krakenkey).
+
+If a tool reports `infra/` or `internal/` as untracked, or a superrepo `git status` looks clean after you edited files there, this is why.
+
 Once inside the container:
 
 ```bash
@@ -106,6 +116,12 @@ krakenkey/
 │   ├── docs/            # User-facing docs (error handling, domain verification)
 │   └── shared/          # Shared code
 ├── web/                 # Marketing site (Astro)
+├── cli/                 # CLI tool (Go, git submodule)
+├── probe/               # TLS monitoring probe (Go, git submodule)
+├── actions/cert-action/ # Certificate GitHub Action (git submodule)
+├── examples/            # Usage examples (git submodule)
+├── infra/               # Infrastructure — separate repo, NOT a submodule (gitignored)
+├── internal/            # Private working docs — separate repo, NOT a submodule (gitignored)
 ├── CONTRIBUTING.md      # This file
 ├── KNOWN_LIMITATIONS.md # Tracked limitations and constraints
 ├── LICENSE              # AGPL-3.0

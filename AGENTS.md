@@ -23,7 +23,7 @@ This is a monorepo with git submodules:
   cli/              # CLI tool (Go 1.26)
   web/              # Marketing site (Astro 5, static, Cloudflare Pages)
   infra/            # Infrastructure (Terraform, Docker Compose, scripts)
-  probe/            # TLS endpoint monitoring probe (Go 1.23)
+  probe/            # TLS endpoint monitoring probe (Go 1.24)
   actions/          # Custom GitHub Actions
     cert-action/    # Certificate management GitHub Action
   tools/            # AI agent skill definitions
@@ -44,7 +44,7 @@ This is a monorepo with git submodules:
 | API Docs | Swagger/OpenAPI (available at `/swagger-json`) |
 | Marketing | Astro 5, custom CSS |
 | CLI | Go 1.26, manual flag-based routing |
-| Probe | Go 1.23, TLS scanning, JSON state file |
+| Probe | Go 1.24, TLS scanning, JSON state file |
 | Infra | Terraform (AWS + Cloudflare), Docker Compose |
 | CI/CD | GitHub Actions, GHCR container images |
 
@@ -268,6 +268,15 @@ Issuance is asynchronous via BullMQ. Typical time: 2-5 minutes. Poll `GET /certs
 
 `chainPem` is intermediates only; `fullChainPem` is leaf + intermediates. Most web servers (nginx, Caddy, HAProxy) expect `fullChainPem`. The CLI (`--fullchain-out`) and GitHub Action (`fullchain-path`) both expose this same distinction.
 
+**Always deploy the full chain — do not rely on AIA chain repair.** Clients split on whether they will fetch the issuing intermediate from the leaf's `authorityInformationAccess` (AIA) `caIssuers` URL when a server presents an incomplete chain:
+
+| Behavior | Clients |
+|----------|---------|
+| Fetches AIA to repair the chain | Windows CryptoAPI/Schannel (and caches the intermediate machine-wide), macOS Security.framework, Chrome's built-in verifier |
+| Never fetches AIA | OpenSSL, Go `crypto/x509`, Firefox (preloads intermediates instead), Java PKIX unless `com.sun.security.enableAIAcaIssuers=true` |
+
+That split is why an incomplete chain can load fine in a desktop browser and fail in `curl`, in a Go service, and in CI with `error 20 at 0 depth lookup: unable to get local issuer certificate`. CA/B Forum ballot SC104 (see PKI Advisories) relaxed AIA from MUST to SHOULD, so leaf certificates may eventually ship with no AIA at all — at which point chain repair is unavailable everywhere. Serving `fullChainPem` is correct today and stays correct either way; validate against a client that does not fetch AIA.
+
 ### PKI Advisories
 
 Developments in the public CA/browser ecosystem relevant to agents working on cert issuance or DNS automation:
@@ -279,7 +288,12 @@ Developments in the public CA/browser ecosystem relevant to agents working on ce
 - **Mozilla Root Store Policy v3.1** — effective 2026-07-01; adds mass revocation planning (ballot SC-089), CP/CPS documentation, and a five-year root key age cap. No direct action needed for KrakenKey as a Let's Encrypt subscriber, but relevant context if evaluating additional CAs.
 - **HARICA CP/CPS drift, two chained mass revocations** — July 2026: an `id-kp-clientAuth` EKU compliance lapse forced 66,105 cert revocations (July 20), followed by a missing OCSP AIA pointer incident forcing mass replacement by July 25. Not KrakenKey's issuer (Let's Encrypt), but the operational pattern is directly relevant here: OCSP stapling and mTLS break on affected certs, and ACME clients with ARI support (RFC 9773) absorb forced CA-initiated renewal far better than clients polling on a static schedule. Worth revisiting if KrakenKey ever adds ARI awareness to its own renewal polling. Tracked in web PR #42.
 - **FreeRDP TLS certificate validation bypass (CVE-2026-66402)** — fixed in FreeRDP 3.29.0 (August 1, 2026): three flaws in FreeRDP's server-certificate matching (embedded-NUL SAN truncation, a CN fallback that ignores a non-matching SAN, and IP-literal targets checked against DNS SAN instead of `iPAddress` SAN) let a certificate that doesn't match the target host pass validation. Not a KrakenKey issuance defect — the bug is client-side matching logic, and correct issuance can't compensate for it — but relevant if any docs or examples ever point users at FreeRDP-based gateways (e.g., Guacamole, Remmina) using KrakenKey-issued certs. Tracked in web PR #44.
-- **SC100 (DNSSEC validation consolidation)** — CA/Browser Forum ballot passed 2026-08-06; consolidates scattered DNSSEC validation language into BR Section 4.2.2.2 and clarifies that mandatory DNSSEC validation applies only to a CA's Primary Network Perspective, not the Remote Network Perspectives used for Multi-Perspective Issuance Corroboration. No behavior change for CAs — a reorganization and clarification of the existing SC-085v2 requirement (mandatory since March 2026). Relevant context if a user reports a DNS-01 renewal failure on a DNSSEC-signed zone: a `SERVFAIL` from the CA's primary perspective (e.g., during a DS/DNSKEY rollover) is a hard issuance block regardless of what other perspectives observe. Tracked in web PR #46.
+- **SC100 (DNSSEC validation consolidation)** — CA/Browser Forum ballot passed 2026-08-06, shipped in Baseline Requirements v2.3.0 effective 2026-09-07; consolidates scattered DNSSEC validation language into BR Section 4.2.2.2 and clarifies that mandatory DNSSEC validation applies only to a CA's Primary Network Perspective, not the Remote Network Perspectives used for Multi-Perspective Issuance Corroboration. No behavior change for CAs — a reorganization and clarification of the existing SC-085v2 requirement (mandatory since March 2026). Relevant context if a user reports a DNS-01 renewal failure on a DNSSEC-signed zone: a `SERVFAIL` from the CA's primary perspective (e.g., during a DS/DNSKEY rollover) is a hard issuance block regardless of what other perspectives observe. Tracked in web PR #46.
+- **SC104 (AIA extension relaxed to SHOULD)** — CA/Browser Forum ballot passed unanimously 2026-09-03 (21 Certificate Issuers in favor, 5 Certificate Consumers in favor, none opposed); IPR Review Period runs to 2026-10-03, after which it lands in the Baseline Requirements. Two edits in BR §7.1.2.7: `authorityInformationAccess` presence goes from MUST to SHOULD in the Subscriber Certificate profile, and §7.1.2.7.7 becomes "**If present**, the `AuthorityInfoAccessSyntax` MUST contain one or more `AccessDescription`s". This resolves a long-standing contradiction — both permitted access methods were already optional (`id-ad-ocsp` at MAY, `id-ad-caIssuers` at SHOULD) while the extension itself was MUST and could not be encoded empty, so a CA declining OCSP had no way to also decline `caIssuers`. Two consequences for KrakenKey:
+  1. **Chain delivery** — a compliant leaf may carry no `caIssuers` URL, so AIA chain repair stops being something any deployment can rely on. This does not change KrakenKey's behavior (the full chain is delivered on issuance and renewal), but it raises the stakes on the client split documented under Certificate Chain above. Nothing breaks on the effective date: SHOULD is not MUST NOT, and every major public CA populates `caIssuers` today.
+  2. **Revocation checking** — BR §7.1.2.11.2 requires `crlDistributionPoints` in subscriber certificates that are neither Short-lived nor carrying an AIA `id-ad-ocsp` accessMethod. Dropping AIA drops the OCSP URL, so any code path that parses an OCSP responder URL out of a leaf needs a CRLDP fallback. Relevant to probe's OCSP stapling collection and to any future revocation-status work.
+
+  Tracked in web PR #57.
 
 ### Probe Modes
 
