@@ -211,7 +211,7 @@ Validation errors return `message` as an array of strings. Plan limit errors inc
 
 ### Rate Limiting
 
-Tier-aware, tracked by user ID (authenticated) or IP (unauthenticated):
+Tier-aware. Callers are bucketed by **JWT subject** (`user:<sub>`) when a JWT is present, and by **client IP** otherwise — which includes API-key callers, because resolving the key's owner needs a database lookup the guard does not perform. Several API keys behind one NAT therefore share a bucket, and that is the usual explanation for a customer seeing limits stricter than their tier's row.
 
 | Tier | Public | Reads | Writes | Expensive |
 |------|--------|-------|--------|-----------|
@@ -222,6 +222,8 @@ Tier-aware, tracked by user ID (authenticated) or IP (unauthenticated):
 | enterprise | 120/min | 1000/min | 200/min | 100/hr |
 
 Expensive operations: cert issuance, renewal, retry, revocation, domain verification.
+
+The table above is a mirror; the source of truth is `backend/src/throttler/config/rate-limit-tiers.config.ts` in the `app` repo, with the full behaviour documented in its `docs/RATE_LIMITING.md`. Update both when the config changes.
 
 ### Plan Limits
 
@@ -251,6 +253,12 @@ issued -> revoking -> revoked (delete possible)
 ```
 
 Issuance is asynchronous via BullMQ. Typical time: 2-5 minutes. Poll `GET /certs/tls/:id` for status.
+
+**Not every `failed` is retryable.** Some failures are classified as permanent and fail on the first attempt instead of consuming the three retries — an invalid CSR, a malformed ACME key authorization, a CA policy refusal, and a missing or misdirected challenge delegation. Retrying these produces the same result, so a cert that goes `pending -> failed` in seconds rather than minutes is almost always one of these, and the fix is in the user's configuration rather than in a retry.
+
+**Challenge delegation is checked before the ACME order is created.** The `_acme-challenge.<domain>` CNAME must point at `<domain-with-dashes>.<auth-zone>` (e.g. `_acme-challenge.example.com` → `example-com.acme.krakenkey.io`). Issuance verifies this up front, follows CNAME chains up to 5 hops, and fails immediately with a message naming the exact record to create. Wildcard requests are checked against the base domain, since `*.example.com` and `example.com` share one `_acme-challenge` name.
+
+The check **fails open** on resolver trouble: only a missing or mismatched CNAME fails, while timeouts and `SERVFAIL` are logged and issuance proceeds. Note this is the opposite of daily domain re-verification, which fails closed on transient DNS errors (see [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md)) — the two DNS paths deliberately differ, so do not "fix" one to match the other without checking which is intended.
 
 ### Certificate Chain
 
