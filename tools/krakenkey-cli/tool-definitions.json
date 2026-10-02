@@ -1,41 +1,42 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "name": "krakenkey-cli",
-  "description": "Tools for using the KrakenKey CLI for TLS certificate management and endpoint monitoring",
-  "version": "0.1.0",
+  "description": "Tools for using the KrakenKey CLI (v0.4.0) for TLS certificate management and endpoint monitoring. Global flags must come before the command (krakenkey --output json cert list); flags placed after the command are not treated as global flags.",
+  "version": "0.4.0",
   "binary": "krakenkey",
   "global_flags": {
-    "--api-url": { "type": "string", "env": "KK_API_URL", "description": "API base URL" },
-    "--api-key": { "type": "string", "env": "KK_API_KEY", "description": "API key" },
-    "--output": { "type": "string", "enum": ["text", "json"], "env": "KK_OUTPUT", "description": "Output format" },
-    "--no-color": { "type": "boolean", "description": "Disable colored output" },
-    "--verbose": { "type": "boolean", "description": "Enable verbose logging" }
+    "--api-url": { "type": "string", "env": "KK_API_URL", "default": "https://api.krakenkey.io", "description": "API base URL" },
+    "--api-key": { "type": "string", "env": "KK_API_KEY", "description": "API key (kk_...). Overrides the env var and config file" },
+    "--output": { "type": "string", "enum": ["text", "json"], "env": "KK_OUTPUT", "default": "text", "description": "Output format. json prints indented JSON on stdout and errors as {\"error\":\"...\"} on stderr" },
+    "--no-color": { "type": "boolean", "description": "Disable colored output. Setting the NO_COLOR env var has the same effect" },
+    "--verbose": { "type": "boolean", "description": "Accepted but currently has no effect" },
+    "--version": { "type": "boolean", "description": "Print version and exit" }
   },
   "tools": [
     {
       "name": "auth_login",
-      "description": "Save an API key to the local config file for subsequent requests",
+      "description": "Validate an API key against the API and save it to the config file (~/.config/krakenkey/config.yaml, mode 0600). Prompts on stdin if --api-key is not given",
       "command": "auth login",
       "flags": {
-        "--api-key": { "type": "string", "required": false, "description": "API key (prompted interactively if not provided)" }
+        "--api-key": { "type": "string", "required": false, "description": "API key to save (prompted interactively if not provided)" }
       },
       "example": "krakenkey auth login --api-key kk_abc123..."
     },
     {
       "name": "auth_logout",
-      "description": "Remove the stored API key from the local config",
+      "description": "Remove the stored API key from the config file. Does not unset KK_API_KEY",
       "command": "auth logout",
       "example": "krakenkey auth logout"
     },
     {
       "name": "auth_status",
-      "description": "Show the current authenticated user's profile and resource counts",
+      "description": "Show the current user, email, plan, and resource counts (domains, certificates, API keys). Exits 5 if no API key is configured",
       "command": "auth status",
       "example": "krakenkey auth status"
     },
     {
       "name": "auth_keys_list",
-      "description": "List all API keys for the authenticated user",
+      "description": "List API keys in a table (ID, Name, Created, Expires)",
       "command": "auth keys list",
       "example": "krakenkey auth keys list"
     },
@@ -44,7 +45,7 @@
       "description": "Create a new API key. The key value is shown only once",
       "command": "auth keys create",
       "flags": {
-        "--name": { "type": "string", "required": true },
+        "--name": { "type": "string", "required": true, "description": "Name for the API key" },
         "--expires-at": { "type": "string", "required": false, "description": "ISO 8601 expiry date" }
       },
       "example": "krakenkey auth keys create --name ci-deploy"
@@ -58,27 +59,27 @@
     },
     {
       "name": "domain_add",
-      "description": "Register a new domain and receive DNS verification instructions",
+      "description": "Register a domain and print the TXT verification record (name: the domain itself, value: krakenkey-site-verification=...). The CLI does not print the _acme-challenge CNAME that issuance also requires",
       "command": "domain add",
       "args": ["hostname"],
       "example": "krakenkey domain add example.com"
     },
     {
       "name": "domain_list",
-      "description": "List all registered domains in a table (ID, Hostname, Verified, Created)",
+      "description": "List registered domains in a table (ID, Hostname, Verified, Created)",
       "command": "domain list",
       "example": "krakenkey domain list"
     },
     {
       "name": "domain_show",
-      "description": "Show full details for a domain including verification code",
+      "description": "Show domain details including verification code and TXT record name",
       "command": "domain show",
       "args": ["id"],
       "example": "krakenkey domain show <uuid>"
     },
     {
       "name": "domain_verify",
-      "description": "Trigger DNS TXT verification for a domain. The TXT record must already be set",
+      "description": "Ask the API to check the TXT verification record and mark the domain verified. Checks the TXT record only, not the _acme-challenge CNAME. Exits 1 if the record is not found",
       "command": "domain verify",
       "args": ["id"],
       "example": "krakenkey domain verify <uuid>"
@@ -92,28 +93,42 @@
     },
     {
       "name": "endpoint_add",
-      "description": "Add a new monitored endpoint for TLS scanning. Subject to plan limits",
+      "description": "Add a monitored endpoint for TLS scanning, optionally assigning connected probes. Subject to plan limits",
       "command": "endpoint add",
       "args": ["host"],
       "flags": {
-        "--port": { "type": "number", "required": false, "default": 443 },
+        "--port": { "type": "number", "required": false, "default": 443, "description": "Port to monitor" },
         "--sni": { "type": "string", "required": false, "description": "SNI override" },
-        "--label": { "type": "string", "required": false, "description": "Human-readable label" }
+        "--label": { "type": "string", "required": false, "description": "Human-readable label" },
+        "--probe": { "type": "string[]", "required": false, "description": "Connected probe ID to assign (repeat for multiple)" }
       },
-      "example": "krakenkey endpoint add example.com --port 443 --label 'Production API'"
+      "example": "krakenkey endpoint add example.com --port 443 --label 'Production API' --probe <probe-id>"
     },
     {
       "name": "endpoint_list",
-      "description": "List all monitored endpoints in a table (ID, Host, Port, Label, Active, Regions, Created)",
+      "description": "List monitored endpoints in a table (ID, Host, Port, Label, Active, Probes, Regions, Created)",
       "command": "endpoint list",
       "example": "krakenkey endpoint list"
     },
     {
       "name": "endpoint_show",
-      "description": "Show full details for an endpoint including hosted regions",
+      "description": "Show endpoint details including SNI, label, hosted regions, and assigned probes. Does not show scan results",
       "command": "endpoint show",
       "args": ["id"],
       "example": "krakenkey endpoint show <uuid>"
+    },
+    {
+      "name": "endpoint_scan",
+      "description": "Request an on-demand TLS scan of an endpoint. The CLI does not display scan results; read them in the dashboard or via the API (GET /endpoints/:id/results)",
+      "command": "endpoint scan",
+      "args": ["id"],
+      "example": "krakenkey endpoint scan <uuid>"
+    },
+    {
+      "name": "endpoint_probes",
+      "description": "List your connected probes available for assignment (ID, Name, Region, Status, Last Seen)",
+      "command": "endpoint probes",
+      "example": "krakenkey endpoint probes"
     },
     {
       "name": "endpoint_enable",
@@ -131,14 +146,28 @@
     },
     {
       "name": "endpoint_delete",
-      "description": "Delete an endpoint and its hosted region assignments",
+      "description": "Delete an endpoint",
       "command": "endpoint delete",
       "args": ["id"],
       "example": "krakenkey endpoint delete <uuid>"
     },
     {
+      "name": "endpoint_probe_add",
+      "description": "Assign a connected probe to an endpoint. Get probe IDs from endpoint probes",
+      "command": "endpoint probe add",
+      "args": ["endpoint-id", "probe-id"],
+      "example": "krakenkey endpoint probe add <uuid> <probe-id>"
+    },
+    {
+      "name": "endpoint_probe_remove",
+      "description": "Remove a connected probe from an endpoint",
+      "command": "endpoint probe remove",
+      "args": ["endpoint-id", "probe-id"],
+      "example": "krakenkey endpoint probe remove <uuid> <probe-id>"
+    },
+    {
       "name": "endpoint_region_add",
-      "description": "Add a hosted probe region to an endpoint (Team tier+). Enables KrakenKey-operated probes to scan this endpoint from the specified region",
+      "description": "Add a hosted probe region to an endpoint (Starter tier+) so KrakenKey-operated probes scan it from that region",
       "command": "endpoint region add",
       "args": ["endpoint-id", "region"],
       "example": "krakenkey endpoint region add <uuid> us-east-1"
@@ -152,65 +181,81 @@
     },
     {
       "name": "cert_issue",
-      "description": "Generate a private key and CSR locally, submit to KrakenKey, and optionally wait for issuance. Private key never leaves the machine",
+      "description": "Generate a private key and CSR locally, submit the CSR, and optionally wait for issuance. The private key never leaves the machine. The CN is always included as a SAN. Key (0600) and CSR are written immediately; cert, chain, and fullchain files are written only with --wait. Every name in the CSR needs a verified domain and an _acme-challenge CNAME, or issuance fails",
       "command": "cert issue",
       "flags": {
         "--domain": { "type": "string", "required": true, "description": "Primary domain (CN)" },
-        "--san": { "type": "string[]", "required": false, "description": "Additional SANs (repeat for multiple)" },
+        "--san": { "type": "string[]", "required": false, "description": "Additional SAN (repeat for multiple; IP addresses become IP SANs)" },
         "--key-type": { "type": "string", "required": false, "default": "ecdsa-p256", "enum": ["rsa-2048", "rsa-4096", "ecdsa-p256", "ecdsa-p384"] },
-        "--key-out": { "type": "string", "required": false, "description": "Private key output path" },
-        "--csr-out": { "type": "string", "required": false, "description": "CSR output path" },
-        "--out": { "type": "string", "required": false, "description": "Certificate output path" },
-        "--auto-renew": { "type": "boolean", "required": false },
-        "--wait": { "type": "boolean", "required": false, "description": "Wait for issuance to complete" }
+        "--org": { "type": "string", "required": false, "description": "Organization (O)" },
+        "--ou": { "type": "string", "required": false, "description": "Organizational unit (OU)" },
+        "--locality": { "type": "string", "required": false, "description": "Locality (L)" },
+        "--state": { "type": "string", "required": false, "description": "State or province (ST)" },
+        "--country": { "type": "string", "required": false, "description": "Country code (C, e.g. US)" },
+        "--key-out": { "type": "string", "required": false, "default": "./<domain>.key", "description": "Private key output path" },
+        "--csr-out": { "type": "string", "required": false, "default": "./<domain>.csr", "description": "CSR output path" },
+        "--out": { "type": "string", "required": false, "default": "./<domain>.crt", "description": "Leaf certificate output path (written with --wait)" },
+        "--chain-out": { "type": "string", "required": false, "default": "./<domain>.chain.crt", "description": "Intermediate chain output path (written with --wait)" },
+        "--fullchain-out": { "type": "string", "required": false, "default": "./<domain>.fullchain.crt", "description": "Leaf + intermediates output path (written with --wait). Most web servers want this file" },
+        "--auto-renew": { "type": "boolean", "required": false, "default": false, "description": "Explicitly enable auto-renewal after submitting. The API already enables auto-renewal on new certificates; use cert update --auto-renew=false to turn it off" },
+        "--wait": { "type": "boolean", "required": false, "default": false, "description": "Poll until the certificate is issued, failed, or revoked, then write the output files" },
+        "--poll-interval": { "type": "string", "required": false, "default": "15s", "description": "How often to poll for status (Go duration)" },
+        "--poll-timeout": { "type": "string", "required": false, "default": "10m", "description": "Maximum time to wait (Go duration)" }
       },
-      "example": "krakenkey cert issue --domain example.com --wait"
+      "example": "krakenkey cert issue --domain example.com --san www.example.com --wait"
     },
     {
       "name": "cert_submit",
-      "description": "Submit an existing CSR PEM file for issuance",
+      "description": "Submit an existing CSR PEM file for issuance and optionally wait. Output file names default to the CSR's CN (or the cert ID if there is no CN)",
       "command": "cert submit",
       "flags": {
         "--csr": { "type": "string", "required": true, "description": "Path to CSR PEM file" },
-        "--out": { "type": "string", "required": false },
-        "--auto-renew": { "type": "boolean", "required": false },
-        "--wait": { "type": "boolean", "required": false }
+        "--out": { "type": "string", "required": false, "default": "./<cn>.crt", "description": "Leaf certificate output path (written with --wait)" },
+        "--chain-out": { "type": "string", "required": false, "default": "./<cn>.chain.crt", "description": "Intermediate chain output path (written with --wait)" },
+        "--fullchain-out": { "type": "string", "required": false, "default": "./<cn>.fullchain.crt", "description": "Leaf + intermediates output path (written with --wait)" },
+        "--auto-renew": { "type": "boolean", "required": false, "default": false, "description": "Explicitly enable auto-renewal after submitting" },
+        "--wait": { "type": "boolean", "required": false, "default": false, "description": "Poll until the certificate is issued, failed, or revoked, then write the output files" },
+        "--poll-interval": { "type": "string", "required": false, "default": "15s", "description": "How often to poll for status (Go duration)" },
+        "--poll-timeout": { "type": "string", "required": false, "default": "10m", "description": "Maximum time to wait (Go duration)" }
       },
-      "example": "krakenkey cert submit --csr ./example.csr --wait"
+      "example": "krakenkey cert submit --csr ./example.csr --wait --fullchain-out ./example.fullchain.crt"
     },
     {
       "name": "cert_list",
-      "description": "List all certificates in a table (ID, Domain, Status, Expires, Auto-renew)",
+      "description": "List certificates in a table (ID, Domain, Status, Expires, Auto-renew)",
       "command": "cert list",
       "flags": {
-        "--status": { "type": "string", "required": false, "description": "Filter by status" }
+        "--status": { "type": "string", "required": false, "enum": ["pending", "issuing", "issued", "failed", "renewing", "revoking", "revoked"], "description": "Filter by status" }
       },
       "example": "krakenkey cert list --status issued"
     },
     {
       "name": "cert_show",
-      "description": "Show full details for a certificate including parsed cert info when issued",
+      "description": "Show certificate details. For issued certs, text output adds serial, issuer, validity, fingerprint, and each intermediate in the chain. JSON output is the certificate record (includes crtPem and chainPem)",
       "command": "cert show",
       "args": ["id"],
       "example": "krakenkey cert show 42"
     },
     {
       "name": "cert_download",
-      "description": "Download the issued certificate PEM to a file",
+      "description": "Write the PEM of an issued certificate to a file. Fails if the certificate is not issued. JSON output is {\"path\": ..., \"format\": ...}",
       "command": "cert download",
       "args": ["id"],
       "flags": {
-        "--out": { "type": "string", "required": false, "description": "Output file path" }
+        "--format": { "type": "string", "required": false, "default": "cert", "enum": ["cert", "chain", "fullchain"], "description": "cert = leaf only, chain = intermediates only, fullchain = leaf + intermediates" },
+        "--out": { "type": "string", "required": false, "default": "./<cn>.crt", "description": "Output file path. Default suffix follows --format: .crt, .chain.crt, or .fullchain.crt" }
       },
-      "example": "krakenkey cert download 42 --out ./example.crt"
+      "example": "krakenkey cert download 42 --format fullchain --out ./example.com.fullchain.crt"
     },
     {
       "name": "cert_renew",
-      "description": "Trigger renewal of an issued certificate",
+      "description": "Trigger renewal of a certificate. Renewal reuses the stored CSR, so the existing private key stays valid. Does not write files; run cert download afterward",
       "command": "cert renew",
       "args": ["id"],
       "flags": {
-        "--wait": { "type": "boolean", "required": false }
+        "--wait": { "type": "boolean", "required": false, "default": false, "description": "Poll until renewal finishes" },
+        "--poll-interval": { "type": "string", "required": false, "default": "15s", "description": "How often to poll for status (Go duration)" },
+        "--poll-timeout": { "type": "string", "required": false, "default": "10m", "description": "Maximum time to wait (Go duration)" }
       },
       "example": "krakenkey cert renew 42 --wait"
     },
@@ -220,19 +265,31 @@
       "command": "cert revoke",
       "args": ["id"],
       "flags": {
-        "--reason": { "type": "number", "required": false, "description": "RFC 5280 reason code (0-10)" }
+        "--reason": { "type": "number", "required": false, "description": "RFC 5280 reason code (0-10). Omitted from the request if not set" }
       },
       "example": "krakenkey cert revoke 42 --reason 4"
     },
     {
+      "name": "cert_retry",
+      "description": "Retry a failed issuance with the same CSR, for example after fixing a missing _acme-challenge CNAME. Does not write files; run cert download afterward",
+      "command": "cert retry",
+      "args": ["id"],
+      "flags": {
+        "--wait": { "type": "boolean", "required": false, "default": false, "description": "Poll until issuance finishes" },
+        "--poll-interval": { "type": "string", "required": false, "default": "15s", "description": "How often to poll for status (Go duration)" },
+        "--poll-timeout": { "type": "string", "required": false, "default": "10m", "description": "Maximum time to wait (Go duration)" }
+      },
+      "example": "krakenkey cert retry 42 --wait"
+    },
+    {
       "name": "cert_update",
-      "description": "Update certificate settings (e.g., toggle auto-renewal)",
+      "description": "Update certificate settings. Currently only auto-renewal",
       "command": "cert update",
       "args": ["id"],
       "flags": {
-        "--auto-renew": { "type": "boolean", "required": false }
+        "--auto-renew": { "type": "boolean", "required": false, "description": "Enable or disable auto-renewal. Pass the value with = (--auto-renew=true or --auto-renew=false)" }
       },
-      "example": "krakenkey cert update 42 --auto-renew=true"
+      "example": "krakenkey cert update 42 --auto-renew=false"
     },
     {
       "name": "cert_delete",
@@ -243,15 +300,21 @@
     },
     {
       "name": "account_show",
-      "description": "Show the authenticated user's profile details",
+      "description": "Show profile details: ID, username, email, display name, plan, resource counts, and member-since date",
       "command": "account show",
       "example": "krakenkey account show"
     },
     {
       "name": "account_plan",
-      "description": "Show subscription plan and billing information",
+      "description": "Show subscription plan, status, current period end, and cancellation state",
       "command": "account plan",
       "example": "krakenkey account plan"
+    },
+    {
+      "name": "version",
+      "description": "Print the CLI version (krakenkey-cli <version>; dev for source builds without version injection)",
+      "command": "version",
+      "example": "krakenkey version"
     }
   ]
 }
