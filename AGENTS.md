@@ -23,7 +23,7 @@ This is a monorepo with git submodules:
   cli/              # CLI tool (Go 1.26)
   web/              # Marketing site (Astro 5, static, Cloudflare Pages)
   infra/            # Infrastructure (Terraform, Docker Compose, scripts)
-  probe/            # TLS endpoint monitoring probe (Go 1.23)
+  probe/            # TLS endpoint monitoring probe (Go 1.24)
   actions/          # Custom GitHub Actions
     cert-action/    # Certificate management GitHub Action
   tools/            # AI agent skill definitions
@@ -44,7 +44,7 @@ This is a monorepo with git submodules:
 | API Docs | Swagger/OpenAPI (available at `/swagger-json`) |
 | Marketing | Astro 5, custom CSS |
 | CLI | Go 1.26, manual flag-based routing |
-| Probe | Go 1.23, TLS scanning, JSON state file |
+| Probe | Go 1.24, TLS scanning, JSON state file |
 | Infra | Terraform (AWS + Cloudflare), Docker Compose |
 | CI/CD | GitHub Actions, GHCR container images |
 
@@ -158,9 +158,14 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | DELETE | `/endpoints/:id/regions/:region` | Yes | Remove hosted probe region |
 | GET | `/endpoints/:id/results` | Yes | Paginated scan results |
 | GET | `/endpoints/:id/results/latest` | Yes | Latest scan result per probe |
+| GET | `/endpoints/:id/results/export` | Yes | Export raw scan results (`?format=json` or `csv`) |
+| POST | `/endpoints/:id/scan` | Yes | Request an on-demand scan |
+| GET | `/endpoints/probes/mine` | Yes | List your connected probes available for assignment |
+| POST | `/endpoints/:id/probes` | Yes | Assign connected probes to an endpoint |
+| DELETE | `/endpoints/:id/probes/:probeId` | Yes | Unassign a connected probe |
 | POST | `/probes/register` | Dual | Register or heartbeat a probe |
 | POST | `/probes/report` | Dual | Submit scan results |
-| GET | `/probes/:id/config` | Dual | Fetch endpoint list for probe |
+| GET | `/probes/:probeId/config` | Dual | Fetch endpoint list for probe |
 | GET | `/certs/tls` | Yes | List certificates |
 | POST | `/certs/tls` | Yes | Submit CSR for issuance |
 | GET | `/certs/tls/:id` | Yes | Get certificate details |
@@ -171,11 +176,11 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | POST | `/certs/tls/:id/retry` | Yes | Retry failed issuance |
 | POST | `/certs/tls/:id/revoke` | Yes | Revoke certificate |
 | DELETE | `/certs/tls/:id` | Yes | Delete failed/revoked cert |
-| POST | `/public/scan` | No | On-demand TLS scan; SSRF-protected, per-IP rate-limited |
+| POST | `/public-scan` | No | On-demand TLS scan; SSRF-protected, per-IP rate-limited |
 | GET | `/users` | Yes | List users (admin only) |
-| GET | `/users/:id` | Yes | Get user |
-| PATCH | `/users/:id` | Yes | Update user |
-| DELETE | `/users/:id` | Yes | Delete user (cascades) |
+| GET | `/users/:id` | Yes | Get user (own record or admin) |
+| PATCH | `/users/:id` | Yes | Update user (own record or admin) |
+| DELETE | `/users/:id` | Yes | Delete user, cascades (own record or admin) |
 | POST | `/organizations` | Yes | Create organization |
 | GET | `/organizations/:id` | Yes | Get org with members |
 | PATCH | `/organizations/:id` | Yes | Update org |
@@ -207,11 +212,13 @@ All errors follow this structure:
 }
 ```
 
-Validation errors return `message` as an array of strings. Plan limit errors include `code: "plan_limit_exceeded"`, `limit`, `current`, and `plan` fields.
+Validation errors return `message` as an array of strings. Branch on `statusCode`, not on `error`: some 4xx responses (plan limits, `429`) currently carry `"error": "Internal Server Error"`.
+
+Plan limit errors return `402` (domains, API keys, certificates) or `403` (monitored endpoints, hosted regions and hosted endpoints), with a readable `message` such as `Monthly certificate limit reached`. The services attach `code: "plan_limit_exceeded"`, `limit`, `current` and `plan`, but the global exception filter currently drops them, so clients only see the standard fields above.
 
 ### Rate Limiting
 
-Tier-aware, tracked by user ID (authenticated) or IP (unauthenticated):
+Tier-aware and counted per route. JWT callers are tracked by user ID; API key and unauthenticated callers by client IP, so several API keys behind one NAT share a bucket. Details: [app/docs/RATE_LIMITING.md](https://github.com/KrakenKey/app/blob/main/docs/RATE_LIMITING.md).
 
 | Tier | Public | Reads | Writes | Expensive |
 |------|--------|-------|--------|-----------|
@@ -222,6 +229,10 @@ Tier-aware, tracked by user ID (authenticated) or IP (unauthenticated):
 | enterprise | 120/min | 1000/min | 200/min | 100/hr |
 
 Expensive operations: cert issuance, renewal, retry, revocation, domain verification.
+
+A `429` carries a `Retry-After` header (seconds); back off for at least that long. Allowed responses carry `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset`.
+
+Separately, 10 failed API key attempts from one IP within 15 minutes lock that IP out of API key auth for 15 minutes (also `429`, message `Too many failed API key attempts`). An agent looping on a bad or revoked key will lock itself out; stop on the first `401` instead of retrying.
 
 ### Plan Limits
 
@@ -254,19 +265,28 @@ Issuance is asynchronous via BullMQ. Typical time: 2-5 minutes. Poll `GET /certs
 
 ### Certificate Chain
 
-`GET /certs/tls/:id/chain` returns the intermediate CA chain for an issued cert:
+An issued cert's PEM data comes from two places:
+
+- `GET /certs/tls/:id` returns the cert record, including `crtPem` (leaf only) and `chainPem` (intermediates only).
+- `GET /certs/tls/:id/chain` returns parsed chain info plus the concatenated full chain:
 
 ```json
 {
-  "chain": [
-    { "subject": "...", "issuer": "...", "fingerprint": "...", "notAfter": "..." }
+  "leafCert": { "...": "parsed leaf details, same shape as /certs/tls/:id/details" },
+  "intermediates": [
+    { "serialNumber": "...", "issuer": "...", "subject": "...", "validFrom": "...", "validTo": "...", "fingerprint": "..." }
   ],
-  "chainPem": "-----BEGIN CERTIFICATE-----...",
   "fullChainPem": "-----BEGIN CERTIFICATE-----..."
 }
 ```
 
-`chainPem` is intermediates only; `fullChainPem` is leaf + intermediates. Most web servers (nginx, Caddy, HAProxy) expect `fullChainPem`. The CLI (`--fullchain-out`) and GitHub Action (`fullchain-path`) both expose this same distinction.
+`fullChainPem` is leaf + intermediates. Most web servers (nginx, Caddy, HAProxy) expect the full chain. The CLI (`cert download --format cert|chain|fullchain`, `--chain-out`, `--fullchain-out`) and GitHub Action (`cert-path`, `chain-path`, `fullchain-path`) expose the same three forms.
+
+### Issuance Notes for Agents
+
+- **Retrying is safe.** Submitting the same CSR again within 15 minutes returns the original cert instead of creating a second one. If the first request is still being created, the retry gets `409 Conflict`; wait and poll.
+- **CNAME delegation is checked before the ACME order.** If `_acme-challenge.<domain>` has no CNAME to KrakenKey's auth zone, or points elsewhere, the cert goes to `failed` on the first attempt with a message naming the exact record to create. Fix DNS, then `POST /certs/tls/:id/retry`. Do not loop on retry without changing DNS.
+- **Failed issuances retry automatically** (3 attempts, ~5s and ~10s apart) unless the failure is permanent: invalid CSR, missing or wrong CNAME delegation, CA policy or CAA refusal, deactivated ACME account, or a CA rate limit.
 
 ### PKI Advisories
 
@@ -299,7 +319,7 @@ The `krakenkey` CLI (`cli/` directory) provides terminal access to all KrakenKey
 # From source
 cd cli && go build -o krakenkey ./cmd/krakenkey
 
-# Pre-built binaries available via GitHub Releases (goreleaser)
+# Pre-built binaries via GitHub Releases (goreleaser): krakenkey_<version>_<os>_<arch>.tar.gz
 ```
 
 ### Authentication
@@ -319,8 +339,9 @@ Config stored at `~/.config/krakenkey/config.yaml`. API key can also be set via 
 | `auth` | login, logout, status, keys (list/create/delete) | Authentication and API key management |
 | `domain` | add, list, show, verify, delete | Domain registration and verification |
 | `cert` | issue, submit, list, show, download, renew, revoke, retry, update, delete | Certificate lifecycle |
-| `endpoint` | add, list, show, enable, disable, delete, scan, region (add/remove), probe (add/remove) | Endpoint monitoring |
+| `endpoint` | add, list, show, enable, disable, delete, scan, probes, region (add/remove), probe (add/remove) | Endpoint monitoring |
 | `account` | show, plan | Account and subscription info |
+| `version` | - | Print version (`dev` for unversioned builds) |
 
 ### Output Formats
 
@@ -337,8 +358,24 @@ krakenkey --no-color domain list       # Plain text without ANSI colors
 | `--api-url` | `KK_API_URL` | API base URL |
 | `--api-key` | `KK_API_KEY` | API key |
 | `--output` | `KK_OUTPUT` | Output format: text or json |
-| `--no-color` | - | Disable colored output |
-| `--verbose` | - | Enable verbose logging |
+| `--no-color` | `NO_COLOR` | Disable colored output |
+| `--verbose` | - | Accepted but currently has no effect |
+| `--version` | - | Print version and exit |
+
+Global flags must come **before** the command (`krakenkey --output json domain list`). After the command they are ignored or rejected.
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | General error |
+| 2 | Authentication error (401). A 403 exits 1 |
+| 3 | Not found (404) |
+| 4 | Rate limited (429) |
+| 5 | Config error (no API key, bad config file permissions) |
+
+Some errors are wrapped before they reach the exit handler (e.g. the submit step of `cert issue`), and those currently exit `1` instead of the specific code. Agents should read the error message too, not only the exit code.
 
 ## Key Patterns
 
@@ -352,7 +389,7 @@ krakenkey --no-color domain list       # Plain text without ANSI colors
 - **CSR generation**: client-side only (Web Crypto API in browser, Go crypto stdlib in CLI)
 - **Endpoint monitoring**: Go probe binary scans TLS endpoints; NestJS API receives and stores results
 - **Dual auth**: Probe endpoints accept user API keys or service keys via ServiceOrUserKeyGuard
-- **Cron jobs**: probe staleness detection (3 AM), scan result retention cleanup (4 AM), domain re-verification (2 AM), cert expiry monitoring (6 AM)
+- **Cron jobs**: domain re-verification (2 AM), probe staleness detection (3 AM), scan result retention cleanup (4 AM), cert expiry monitoring (6 AM), activation reminder emails (10 AM)
 
 ## Writing Style
 
@@ -362,5 +399,7 @@ When generating user-facing content: avoid em dashes, "delve", "leverage", "elev
 
 See [tools/](tools/) for structured skill definitions that AI agents can use:
 
-- **[krakenkey-api](tools/krakenkey-api/)** -- Tool definitions and workflows for the KrakenKey REST API. Covers all endpoints including endpoint monitoring, probe management, certificate lifecycle, domain verification, billing, and organizations.
-- **[krakenkey-cli](tools/krakenkey-cli/)** -- Tool definitions and workflows for the `krakenkey` CLI. Covers all commands: auth, domain, cert, endpoint, and account.
+- **[krakenkey-api](tools/krakenkey-api/)** -- Tool definitions and workflows for the KrakenKey REST API, one tool per public route: certificate lifecycle and chain download, domain verification, endpoint monitoring, connected probes, public scan, organizations, users, and billing. OAuth redirects, the Stripe webhook, and `/metrics` are intentionally left out.
+- **[krakenkey-cli](tools/krakenkey-cli/)** -- Tool definitions and workflows for the `krakenkey` CLI (v0.4.0). Covers all commands: auth, domain, cert, endpoint, account, and version.
+
+When the API or CLI changes, update the matching `tools/` files in the same release. The definitions are checked against `app` main and the latest `cli` release, so drift shows up as wrong paths or missing flags for agents.

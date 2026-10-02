@@ -1,54 +1,81 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "name": "krakenkey-api",
-  "description": "Tools for interacting with the KrakenKey TLS certificate management API",
-  "version": "0.1.0",
+  "description": "Tools for interacting with the KrakenKey TLS certificate management and endpoint monitoring API",
+  "version": "0.2.0",
   "base_url": "https://api.krakenkey.io",
   "auth": {
     "type": "bearer",
     "header": "Authorization",
     "prefix": "Bearer",
-    "description": "API key (starts with kk_) or JWT access token"
+    "description": "User API key (kk_...) or JWT access token. Probe routes also accept a service key (kk_svc_...)"
   },
   "tools": [
     {
       "name": "get_api_status",
-      "description": "Check if the KrakenKey API is running and get the current version",
+      "description": "Check that the KrakenKey API is running and get its version",
       "method": "GET",
       "path": "/",
       "auth_required": false,
+      "rate_limit_category": "public",
       "parameters": {},
       "response": {
-        "status": "string",
+        "status": "string ('ok')",
         "version": "string"
       }
     },
     {
+      "name": "liveness_check",
+      "description": "Liveness check. Returns 200 whenever the API process is serving requests; does not check dependencies",
+      "method": "GET",
+      "path": "/health",
+      "auth_required": false,
+      "rate_limit_category": "public",
+      "parameters": {},
+      "response": {
+        "status": "string ('ok')",
+        "timestamp": "ISO8601",
+        "version": "string",
+        "environment": "string"
+      }
+    },
+    {
       "name": "health_check",
-      "description": "Get API health status including database, Redis, and auth provider connectivity",
+      "description": "Readiness check covering the database, Redis, and the Authentik auth provider. Returns 503 when any of them is down",
       "method": "GET",
       "path": "/health/readiness",
       "auth_required": false,
+      "rate_limit_category": "public",
       "parameters": {},
       "response": {
-        "status": "string ('ok' | 'error')",
-        "details": "object (per-service health)"
+        "status": "string ('ok')",
+        "info": "object (per-dependency status keyed by 'db', 'redis', 'auth')",
+        "error": "object",
+        "details": "object"
       }
     },
     {
       "name": "get_profile",
-      "description": "Get the authenticated user's profile including resource counts (domains, certificates, API keys)",
+      "description": "Get the authenticated user's profile, plan, org membership, and resource counts. Resource counts are pooled across all members when the user belongs to an organization",
       "method": "GET",
       "path": "/auth/profile",
       "auth_required": true,
+      "rate_limit_category": "read",
       "parameters": {},
       "response": {
         "id": "string",
         "username": "string",
         "email": "string",
+        "groups": ["string"],
         "displayName": "string | null",
+        "notificationPreferences": "object (notification type -> boolean)",
         "createdAt": "ISO8601",
-        "plan": "string | null",
+        "plan": "string (free | starter | team | business | enterprise)",
+        "autoRenewalConfirmedAt": "ISO8601 | null",
+        "firstDomainAddedAt": "ISO8601 | null",
+        "firstCertIssuedAt": "ISO8601 | null",
+        "organizationId": "string (UUID) | null",
+        "role": "string (owner | admin | member | viewer) | null",
         "resourceCounts": {
           "domains": "number",
           "certificates": "number",
@@ -58,10 +85,11 @@
     },
     {
       "name": "update_profile",
-      "description": "Update the authenticated user's display name or notification preferences",
+      "description": "Update the authenticated user's display name or email notification preferences. Preference keys are merged into the existing settings; omitted keys keep their current value (unset keys default to enabled). Returns the full profile",
       "method": "PATCH",
       "path": "/auth/profile",
       "auth_required": true,
+      "rate_limit_category": "write",
       "parameters": {
         "body": {
           "displayName": { "type": "string", "max_length": 100, "required": false },
@@ -76,18 +104,34 @@
               "cert_revoked": "boolean",
               "domain_verification_failed": "boolean",
               "plan_limit_reached": "boolean",
-              "auto_renewal_paused": "boolean"
+              "auto_renewal_paused": "boolean",
+              "welcome": "boolean",
+              "activation_reminder": "boolean"
             }
           }
         }
+      },
+      "response": "object (same shape as get_profile)"
+    },
+    {
+      "name": "confirm_auto_renewal",
+      "description": "Confirm the user still wants automatic renewal. On the free plan, auto-renewal pauses when the last confirmation is more than 6 months old; this resets the confirmation timestamp. Paid plans are not affected",
+      "method": "POST",
+      "path": "/auth/confirm-auto-renewal",
+      "auth_required": true,
+      "rate_limit_category": "write",
+      "parameters": {},
+      "response": {
+        "confirmedAt": "ISO8601"
       }
     },
     {
       "name": "list_api_keys",
-      "description": "List all API keys for the authenticated user (metadata only, not the secret values)",
+      "description": "List the API keys created by the authenticated user, newest first (metadata only, never the secret)",
       "method": "GET",
       "path": "/auth/api-keys",
       "auth_required": true,
+      "rate_limit_category": "read",
       "parameters": {},
       "response": [
         {
@@ -100,47 +144,54 @@
     },
     {
       "name": "create_api_key",
-      "description": "Create a new API key. The key value (kk_...) is returned only once -- store it immediately",
+      "description": "Create a new user API key. The key value (kk_...) is returned only once; store it immediately. Returns 402 when the plan's API key limit (pooled across org members) is reached",
       "method": "POST",
       "path": "/auth/api-keys",
       "auth_required": true,
+      "rate_limit_category": "write",
       "parameters": {
         "body": {
           "name": { "type": "string", "max_length": 100, "required": false, "default": "default" },
-          "expiresAt": { "type": "ISO8601", "required": false }
+          "expiresAt": { "type": "ISO8601", "required": false, "description": "Expiry timestamp. Omit for a key that never expires" }
         }
       },
       "response": {
-        "apiKey": "string (kk_... -- shown only once)",
+        "apiKey": "string (kk_..., shown only once)",
         "id": "string (UUID)",
         "name": "string"
       }
     },
     {
       "name": "delete_api_key",
-      "description": "Delete an API key by its ID",
+      "description": "Delete one of the authenticated user's API keys. Returns 404 if the key does not exist or belongs to someone else",
       "method": "DELETE",
       "path": "/auth/api-keys/{id}",
       "auth_required": true,
+      "rate_limit_category": "write",
       "parameters": {
         "path": {
           "id": { "type": "string", "format": "uuid", "required": true }
         }
+      },
+      "response": {
+        "message": "string ('API key deleted')"
       }
     },
     {
       "name": "list_domains",
-      "description": "List all domains registered by the authenticated user",
+      "description": "List domains registered by the authenticated user, or by any member of the user's organization",
       "method": "GET",
       "path": "/domains",
       "auth_required": true,
+      "rate_limit_category": "read",
       "parameters": {},
       "response": [
         {
           "id": "string (UUID)",
           "hostname": "string",
-          "verificationCode": "string",
+          "verificationCode": "string (krakenkey-site-verification=...)",
           "isVerified": "boolean",
+          "userId": "string",
           "createdAt": "ISO8601",
           "updatedAt": "ISO8601"
         }
@@ -148,38 +199,43 @@
     },
     {
       "name": "register_domain",
-      "description": "Register a new domain for certificate management. Returns a verification code that must be set as a DNS TXT record",
+      "description": "Register a domain for certificate issuance. Returns a verificationCode that must be published as a DNS TXT record on the hostname itself. If the caller already registered this hostname, the existing record is returned. Returns 402 when the plan's domain limit (pooled across org members) is reached",
       "method": "POST",
       "path": "/domains",
       "auth_required": true,
+      "rate_limit_category": "write",
       "parameters": {
         "body": {
-          "hostname": { "type": "string", "max_length": 253, "required": true, "description": "Fully qualified domain name (e.g., example.com)" }
+          "hostname": { "type": "string", "max_length": 253, "required": true, "description": "Fully qualified domain name (e.g., example.com). Verifying a domain also authorizes all of its subdomains" }
         }
       },
       "response": {
         "id": "string (UUID)",
         "hostname": "string",
-        "verificationCode": "string (set this as TXT record at @ in DNS)",
+        "verificationCode": "string (publish as a TXT record at the hostname)",
         "isVerified": "boolean (false until verified)",
-        "createdAt": "ISO8601"
+        "userId": "string",
+        "createdAt": "ISO8601",
+        "updatedAt": "ISO8601"
       }
     },
     {
       "name": "get_domain",
-      "description": "Get details of a specific domain",
+      "description": "Get one domain owned by the caller or a member of the caller's organization",
       "method": "GET",
       "path": "/domains/{id}",
       "auth_required": true,
+      "rate_limit_category": "read",
       "parameters": {
         "path": {
           "id": { "type": "string", "format": "uuid", "required": true }
         }
-      }
+      },
+      "response": "object (same shape as a list_domains item)"
     },
     {
       "name": "verify_domain",
-      "description": "Trigger DNS verification for a domain. The TXT record must already be set. This is a rate-limited (expensive) operation",
+      "description": "Look up the hostname's DNS TXT records and mark the domain verified if one contains the verificationCode. Returns the domain immediately if it is already verified. Returns 400 if the record is missing or the DNS lookup fails. This only checks the TXT record; the _acme-challenge CNAME is checked later, when a certificate is issued",
       "method": "POST",
       "path": "/domains/{id}/verify",
       "auth_required": true,
@@ -188,14 +244,16 @@
         "path": {
           "id": { "type": "string", "format": "uuid", "required": true }
         }
-      }
+      },
+      "response": "object (same shape as a list_domains item, with isVerified: true)"
     },
     {
       "name": "delete_domain",
-      "description": "Delete a registered domain",
+      "description": "Delete a domain. Returns an empty body on success",
       "method": "DELETE",
       "path": "/domains/{id}",
       "auth_required": true,
+      "rate_limit_category": "write",
       "parameters": {
         "path": {
           "id": { "type": "string", "format": "uuid", "required": true }
@@ -204,60 +262,75 @@
     },
     {
       "name": "list_certificates",
-      "description": "List all TLS certificates for the authenticated user",
+      "description": "List TLS certificates owned by the authenticated user, or by any member of the user's organization",
       "method": "GET",
       "path": "/certs/tls",
       "auth_required": true,
+      "rate_limit_category": "read",
       "parameters": {},
       "response": [
         {
           "id": "number",
           "rawCsr": "string (PEM)",
-          "parsedCsr": { "subject": "string", "keyType": "string", "keySize": "number", "sanList": ["string"] },
-          "crtPem": "string (PEM) | null",
+          "parsedCsr": {
+            "subject": [{ "name": "string", "shortName": "string", "value": "string" }],
+            "attributes": ["object"],
+            "publicKey": { "keyType": "string", "bitLength": "number" },
+            "extensions": [{ "name": "string", "altNames": [{ "type": "number (2 = DNS, 7 = IP, 1 = email)", "value": "string" }] }]
+          },
+          "crtPem": "string (PEM, leaf certificate only) | null",
+          "chainPem": "string (PEM, intermediates only) | null",
           "status": "string (pending | issuing | issued | failed | renewing | revoking | revoked)",
           "expiresAt": "ISO8601 | null",
+          "lastRenewedAt": "ISO8601 | null",
           "autoRenew": "boolean",
           "renewalCount": "number",
-          "createdAt": "ISO8601"
+          "lastRenewalAttemptAt": "ISO8601 | null",
+          "revocationReason": "number | null",
+          "revokedAt": "ISO8601 | null",
+          "createdAt": "ISO8601",
+          "userId": "string"
         }
       ]
     },
     {
       "name": "submit_csr",
-      "description": "Submit a PEM-encoded Certificate Signing Request for issuance. The domain(s) in the CSR must be verified. Issuance is async -- poll the returned ID for status. This is a rate-limited (expensive) operation",
+      "description": "Submit a PEM-encoded CSR for issuance. Keys must be RSA >= 2048 bits or ECDSA P-256/P-384. Every name in the CSR must be a verified domain or a subdomain of one (wildcards allowed), and each name needs an _acme-challenge CNAME delegated to KrakenKey or issuance fails. Issuance is async; poll get_certificate. Resubmitting the same CSR within 15 minutes returns the original certificate instead of a new one (409 while the original request is still being created). Returns 402 when a certificate plan limit is reached",
       "method": "POST",
       "path": "/certs/tls",
       "auth_required": true,
       "rate_limit_category": "expensive",
       "parameters": {
         "body": {
-          "csrPem": { "type": "string", "max_length": 10000, "required": true, "description": "PEM-encoded CSR (-----BEGIN CERTIFICATE REQUEST-----...)" }
+          "csrPem": { "type": "string", "max_length": 10000, "required": true, "description": "PEM-encoded CSR (-----BEGIN CERTIFICATE REQUEST-----...-----END CERTIFICATE REQUEST-----)" }
         }
       },
       "response": {
         "id": "number",
-        "status": "string (pending)"
+        "status": "string (pending, or the current status on an idempotent replay)"
       }
     },
     {
       "name": "get_certificate",
-      "description": "Get certificate details and status. When status is 'issued', crtPem contains the certificate",
+      "description": "Get a certificate and its status. When status is 'issued', crtPem holds the leaf certificate and chainPem the intermediates. crtPem and chainPem are null while a renewal is running and after a failure",
       "method": "GET",
       "path": "/certs/tls/{id}",
       "auth_required": true,
+      "rate_limit_category": "read",
       "parameters": {
         "path": {
           "id": { "type": "number", "required": true }
         }
-      }
+      },
+      "response": "object (same shape as a list_certificates item)"
     },
     {
       "name": "get_certificate_details",
-      "description": "Get parsed details of an issued certificate (serial number, issuer, validity dates, fingerprint). Only works for certificates with status 'issued'",
+      "description": "Get parsed details of the leaf certificate. Returns 400 if the certificate has no PEM yet (not issued)",
       "method": "GET",
       "path": "/certs/tls/{id}/details",
       "auth_required": true,
+      "rate_limit_category": "read",
       "parameters": {
         "path": {
           "id": { "type": "number", "required": true }
@@ -271,28 +344,56 @@
         "validTo": "ISO8601",
         "keyType": "string",
         "keySize": "number",
-        "fingerprint": "string"
+        "fingerprint": "string (SHA-256)"
+      }
+    },
+    {
+      "name": "get_certificate_chain",
+      "description": "Get the leaf details, parsed intermediates, and a ready-to-deploy full chain PEM (leaf followed by intermediates). Use fullChainPem for nginx, Caddy, HAProxy and similar servers. For intermediates only, use chainPem from get_certificate. Returns 400 if the certificate has no PEM yet",
+      "method": "GET",
+      "path": "/certs/tls/{id}/chain",
+      "auth_required": true,
+      "rate_limit_category": "read",
+      "parameters": {
+        "path": {
+          "id": { "type": "number", "required": true }
+        }
+      },
+      "response": {
+        "leafCert": "object (same shape as get_certificate_details)",
+        "intermediates": [
+          {
+            "serialNumber": "string",
+            "issuer": "string",
+            "subject": "string",
+            "validFrom": "ISO8601",
+            "validTo": "ISO8601",
+            "fingerprint": "string (SHA-256)"
+          }
+        ],
+        "fullChainPem": "string (PEM, leaf + intermediates)"
       }
     },
     {
       "name": "update_certificate",
-      "description": "Update a certificate's properties (e.g., toggle auto-renewal)",
+      "description": "Toggle automatic renewal for a certificate. Returns the updated certificate",
       "method": "PATCH",
       "path": "/certs/tls/{id}",
       "auth_required": true,
+      "rate_limit_category": "write",
       "parameters": {
         "path": {
           "id": { "type": "number", "required": true }
         },
         "body": {
-          "autoRenew": { "type": "boolean", "required": false },
-          "csrPem": { "type": "string", "required": false }
+          "autoRenew": { "type": "boolean", "required": false }
         }
-      }
+      },
+      "response": "object (same shape as a list_certificates item)"
     },
     {
       "name": "renew_certificate",
-      "description": "Trigger renewal of an issued certificate. Async -- poll for status. This is a rate-limited (expensive) operation",
+      "description": "Renew an issued certificate using its original CSR. Only works when status is 'issued'. Subject to the same plan limits as issuance (402). Async; poll get_certificate until status returns to 'issued'. crtPem and chainPem are cleared while the renewal runs, so save the current certificate first if you still need it",
       "method": "POST",
       "path": "/certs/tls/{id}/renew",
       "auth_required": true,
@@ -301,11 +402,15 @@
         "path": {
           "id": { "type": "number", "required": true }
         }
+      },
+      "response": {
+        "id": "number",
+        "status": "string (renewing)"
       }
     },
     {
       "name": "retry_certificate",
-      "description": "Retry issuance of a failed certificate. Only works when status is 'failed'. This is a rate-limited (expensive) operation",
+      "description": "Re-queue issuance of a failed certificate using its original CSR. Only works when status is 'failed'. Subject to the same plan limits as issuance (402). Fix the cause first (for example a missing _acme-challenge CNAME), since permanent failures repeat",
       "method": "POST",
       "path": "/certs/tls/{id}/retry",
       "auth_required": true,
@@ -314,11 +419,15 @@
         "path": {
           "id": { "type": "number", "required": true }
         }
+      },
+      "response": {
+        "id": "number",
+        "status": "string (pending)"
       }
     },
     {
       "name": "revoke_certificate",
-      "description": "Revoke an issued certificate. Only works when status is 'issued'. This is a rate-limited (expensive) operation",
+      "description": "Revoke an issued certificate with the CA. Only works when status is 'issued' and only on certificates the caller created (not other org members'). Synchronous: returns status 'revoked' on success; on a CA error returns 500 and the status goes back to 'issued'",
       "method": "POST",
       "path": "/certs/tls/{id}/revoke",
       "auth_required": true,
@@ -328,154 +437,37 @@
           "id": { "type": "number", "required": true }
         },
         "body": {
-          "reason": { "type": "number", "required": false, "description": "RFC 5280 reason code: 0=unspecified, 1=keyCompromise, 3=affiliationChanged, 4=superseded, 5=cessationOfOperation" }
+          "reason": { "type": "integer", "minimum": 0, "maximum": 10, "required": false, "default": 0, "description": "RFC 5280 reason code: 0=unspecified, 1=keyCompromise, 3=affiliationChanged, 4=superseded, 5=cessationOfOperation" }
         }
+      },
+      "response": {
+        "id": "number",
+        "status": "string (revoked)"
       }
     },
     {
       "name": "delete_certificate",
-      "description": "Delete a certificate record. Only works when status is 'failed' or 'revoked'",
+      "description": "Delete a certificate record. Only works when status is 'failed' or 'revoked' (400 otherwise)",
       "method": "DELETE",
       "path": "/certs/tls/{id}",
       "auth_required": true,
+      "rate_limit_category": "write",
       "parameters": {
         "path": {
           "id": { "type": "number", "required": true }
         }
-      }
-    },
-    {
-      "name": "get_subscription",
-      "description": "Get the authenticated user's current subscription plan and status",
-      "method": "GET",
-      "path": "/billing/subscription",
-      "auth_required": true,
-      "parameters": {},
-      "response": {
-        "plan": "string (free | starter | team | business | enterprise)",
-        "status": "string (active | past_due | canceled | incomplete | trialing)",
-        "currentPeriodEnd": "ISO8601 | null",
-        "cancelAtPeriodEnd": "boolean"
-      }
-    },
-    {
-      "name": "preview_upgrade",
-      "description": "Preview the prorated cost of upgrading to a different plan",
-      "method": "POST",
-      "path": "/billing/upgrade/preview",
-      "auth_required": true,
-      "parameters": {
-        "body": {
-          "plan": { "type": "string", "enum": ["starter", "team", "business", "enterprise"], "required": true }
-        }
       },
       "response": {
-        "immediateAmountCents": "number",
-        "currency": "string",
-        "targetPlan": "string",
-        "currentPeriodEnd": "ISO8601"
-      }
-    },
-    {
-      "name": "upgrade_plan",
-      "description": "Upgrade the user's subscription plan with proration",
-      "method": "POST",
-      "path": "/billing/upgrade",
-      "auth_required": true,
-      "parameters": {
-        "body": {
-          "plan": { "type": "string", "enum": ["starter", "team", "business", "enterprise"], "required": true }
-        }
-      }
-    },
-    {
-      "name": "create_organization",
-      "description": "Create a new organization. The creating user becomes the owner. Fails if user is already in an org",
-      "method": "POST",
-      "path": "/organizations",
-      "auth_required": true,
-      "parameters": {
-        "body": {
-          "name": { "type": "string", "min_length": 2, "max_length": 80, "required": true }
-        }
-      }
-    },
-    {
-      "name": "get_organization",
-      "description": "Get organization details including member list",
-      "method": "GET",
-      "path": "/organizations/{id}",
-      "auth_required": true,
-      "parameters": {
-        "path": {
-          "id": { "type": "string", "format": "uuid", "required": true }
-        }
-      }
-    },
-    {
-      "name": "invite_member",
-      "description": "Invite a user to the organization by email. The user must already have a KrakenKey account",
-      "method": "POST",
-      "path": "/organizations/{id}/members",
-      "auth_required": true,
-      "parameters": {
-        "path": {
-          "id": { "type": "string", "format": "uuid", "required": true }
-        },
-        "body": {
-          "email": { "type": "string", "required": true },
-          "role": { "type": "string", "enum": ["admin", "member", "viewer"], "required": false, "default": "member" }
-        }
-      }
-    },
-    {
-      "name": "update_member_role",
-      "description": "Change a member's role in the organization",
-      "method": "PATCH",
-      "path": "/organizations/{id}/members/{userId}",
-      "auth_required": true,
-      "parameters": {
-        "path": {
-          "id": { "type": "string", "format": "uuid", "required": true },
-          "userId": { "type": "string", "required": true }
-        },
-        "body": {
-          "role": { "type": "string", "enum": ["admin", "member", "viewer"], "required": true }
-        }
-      }
-    },
-    {
-      "name": "remove_member",
-      "description": "Remove a member from the organization",
-      "method": "DELETE",
-      "path": "/organizations/{id}/members/{userId}",
-      "auth_required": true,
-      "parameters": {
-        "path": {
-          "id": { "type": "string", "format": "uuid", "required": true },
-          "userId": { "type": "string", "required": true }
-        }
-      }
-    },
-    {
-      "name": "submit_feedback",
-      "description": "Submit user feedback with a message and rating",
-      "method": "POST",
-      "path": "/feedback",
-      "auth_required": true,
-      "parameters": {
-        "body": {
-          "message": { "type": "string", "max_length": 5000, "required": true },
-          "rating": { "type": "number", "minimum": 1, "maximum": 5, "required": true }
-        }
+        "id": "number"
       }
     },
     {
       "name": "list_endpoints",
-      "description": "List all monitored endpoints for the authenticated user, including hosted region assignments",
+      "description": "List monitored endpoints owned by the authenticated user or their organization, newest first, with hosted regions and connected probe assignments",
       "method": "GET",
       "path": "/endpoints",
       "auth_required": true,
+      "rate_limit_category": "read",
       "parameters": {},
       "response": [
         {
@@ -486,7 +478,17 @@
           "sni": "string | null",
           "label": "string | null",
           "isActive": "boolean",
-          "hostedRegions": [{ "id": "string", "region": "string", "createdAt": "ISO8601" }],
+          "lastScanRequestedAt": "ISO8601 | null",
+          "hostedRegions": [{ "id": "string (UUID)", "endpointId": "string", "region": "string", "createdAt": "ISO8601" }],
+          "probeAssignments": [
+            {
+              "id": "string (UUID)",
+              "endpointId": "string",
+              "probeId": "string",
+              "probe": { "id": "string", "name": "string", "mode": "string", "region": "string | null", "status": "string (active | stale)", "lastSeenAt": "ISO8601 | null" },
+              "createdAt": "ISO8601"
+            }
+          ],
           "createdAt": "ISO8601",
           "updatedAt": "ISO8601"
         }
@@ -494,79 +496,161 @@
     },
     {
       "name": "create_endpoint",
-      "description": "Register a new endpoint for TLS monitoring. Subject to plan limits (3/10/50/200/unlimited by tier). Returns 403 with code 'plan_limit_exceeded' when at capacity",
+      "description": "Register a host:port for TLS monitoring and request an immediate scan. If the caller already has an endpoint with the same host and port, that endpoint is updated (label, sni, extra probes and regions merged) and returned. Returns 403 when the plan's monitored endpoint limit is reached; hosted regions are subject to the add_hosted_region limits",
       "method": "POST",
       "path": "/endpoints",
       "auth_required": true,
+      "rate_limit_category": "write",
       "parameters": {
         "body": {
           "host": { "type": "string", "max_length": 253, "required": true, "description": "FQDN to monitor (e.g., example.com)" },
-          "port": { "type": "number", "required": false, "default": 443 },
+          "port": { "type": "integer", "minimum": 1, "maximum": 65535, "required": false, "default": 443 },
           "sni": { "type": "string", "max_length": 253, "required": false, "description": "SNI override (defaults to host)" },
-          "label": { "type": "string", "max_length": 100, "required": false, "description": "Human-readable label" }
+          "label": { "type": "string", "max_length": 100, "required": false, "description": "Human-readable label" },
+          "probeIds": { "type": "array", "items": "string", "required": false, "description": "Connected probe IDs to assign" },
+          "hostedRegions": { "type": "array", "items": "string", "required": false, "description": "Hosted probe regions to add" }
         }
       },
-      "response": {
-        "id": "string (UUID)",
-        "host": "string",
-        "port": "number",
-        "isActive": "boolean",
-        "createdAt": "ISO8601"
-      }
+      "response": "object (same shape as a list_endpoints item)"
     },
     {
       "name": "get_endpoint",
-      "description": "Get details of a specific monitored endpoint including its hosted regions",
+      "description": "Get one monitored endpoint with its hosted regions and probe assignments",
       "method": "GET",
       "path": "/endpoints/{id}",
       "auth_required": true,
+      "rate_limit_category": "read",
       "parameters": {
         "path": {
           "id": { "type": "string", "format": "uuid", "required": true }
         }
-      }
+      },
+      "response": "object (same shape as a list_endpoints item)"
     },
     {
       "name": "update_endpoint",
-      "description": "Update an endpoint's mutable properties (SNI override, label, active status). Host and port cannot be changed after creation",
+      "description": "Update an endpoint. Host and port cannot be changed. probeIds and hostedRegions, when provided, replace the existing assignments entirely",
       "method": "PATCH",
       "path": "/endpoints/{id}",
       "auth_required": true,
+      "rate_limit_category": "write",
       "parameters": {
         "path": {
           "id": { "type": "string", "format": "uuid", "required": true }
         },
         "body": {
-          "sni": { "type": "string", "required": false },
-          "label": { "type": "string", "required": false },
-          "isActive": { "type": "boolean", "required": false }
+          "sni": { "type": "string", "max_length": 253, "required": false },
+          "label": { "type": "string", "max_length": 100, "required": false },
+          "isActive": { "type": "boolean", "required": false, "description": "Inactive endpoints are not handed to probes" },
+          "probeIds": { "type": "array", "items": "string", "required": false, "description": "Replaces all connected probe assignments" },
+          "hostedRegions": { "type": "array", "items": "string", "required": false, "description": "Replaces all hosted regions" }
+        }
+      },
+      "response": "object (same shape as a list_endpoints item)"
+    },
+    {
+      "name": "delete_endpoint",
+      "description": "Delete a monitored endpoint. Hosted regions and probe assignments are deleted with it; existing scan results are kept but unlinked from the endpoint. Returns an empty body",
+      "method": "DELETE",
+      "path": "/endpoints/{id}",
+      "auth_required": true,
+      "rate_limit_category": "write",
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "format": "uuid", "required": true }
         }
       }
     },
     {
-      "name": "delete_endpoint",
-      "description": "Delete a monitored endpoint. Cascades to hosted region assignments. Scan results are preserved but unlinked",
-      "method": "DELETE",
-      "path": "/endpoints/{id}",
+      "name": "request_endpoint_scan",
+      "description": "Ask probes to scan this endpoint now. Probes that fetch their config within the next 5 minutes see scanNow: true for it. Results show up in get_endpoint_latest_results once a probe reports",
+      "method": "POST",
+      "path": "/endpoints/{id}/scan",
       "auth_required": true,
+      "rate_limit_category": "write",
       "parameters": {
         "path": {
           "id": { "type": "string", "format": "uuid", "required": true }
+        }
+      },
+      "response": "object (the endpoint, with updated lastScanRequestedAt)"
+    },
+    {
+      "name": "list_my_probes",
+      "description": "List connected (self-hosted) probes registered by the authenticated user or their organization, most recently seen first. Use these IDs with assign_probes",
+      "method": "GET",
+      "path": "/endpoints/probes/mine",
+      "auth_required": true,
+      "rate_limit_category": "read",
+      "parameters": {},
+      "response": [
+        {
+          "id": "string",
+          "name": "string",
+          "version": "string",
+          "mode": "string (connected)",
+          "region": "string | null",
+          "os": "string",
+          "arch": "string",
+          "status": "string (active | stale)",
+          "userId": "string",
+          "lastSeenAt": "ISO8601 | null",
+          "createdAt": "ISO8601",
+          "updatedAt": "ISO8601"
+        }
+      ]
+    },
+    {
+      "name": "assign_probes",
+      "description": "Assign connected probes to an endpoint. A connected probe only scans endpoints assigned to it. IDs that are not connected probes owned by the caller or their organization are skipped silently; already-assigned probes are left as is",
+      "method": "POST",
+      "path": "/endpoints/{id}/probes",
+      "auth_required": true,
+      "rate_limit_category": "write",
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "format": "uuid", "required": true }
+        },
+        "body": {
+          "probeIds": { "type": "array", "items": "string", "required": true }
+        }
+      },
+      "response": [
+        {
+          "id": "string (UUID)",
+          "endpointId": "string",
+          "probeId": "string",
+          "createdAt": "ISO8601"
+        }
+      ]
+    },
+    {
+      "name": "unassign_probe",
+      "description": "Remove a connected probe from an endpoint. Returns 404 if the probe is not assigned. Returns an empty body",
+      "method": "DELETE",
+      "path": "/endpoints/{id}/probes/{probeId}",
+      "auth_required": true,
+      "rate_limit_category": "write",
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "format": "uuid", "required": true },
+          "probeId": { "type": "string", "required": true }
         }
       }
     },
     {
       "name": "add_hosted_region",
-      "description": "Add a hosted probe region to an endpoint. Requires Starter tier or above. Subject to hostedProbeRegions and hostedMonitoredEndpoints plan limits",
+      "description": "Have KrakenKey-operated probes in a region scan this endpoint. Not available on the free plan. Returns 403 when the plan has no hosted monitoring, or when the hosted endpoint or hosted region limit (pooled across org members) is reached. Adding a region the endpoint already has returns the existing record",
       "method": "POST",
       "path": "/endpoints/{id}/regions",
       "auth_required": true,
+      "rate_limit_category": "write",
       "parameters": {
         "path": {
           "id": { "type": "string", "format": "uuid", "required": true }
         },
         "body": {
-          "region": { "type": "string", "max_length": 50, "required": true, "description": "Region identifier (e.g., us-east-1)" }
+          "region": { "type": "string", "max_length": 50, "required": true, "description": "Region identifier (e.g., us-east-1). Must match the region a hosted probe registers with" }
         }
       },
       "response": {
@@ -578,10 +662,11 @@
     },
     {
       "name": "remove_hosted_region",
-      "description": "Remove a hosted probe region from an endpoint",
+      "description": "Remove a hosted probe region from an endpoint. Returns 404 if the endpoint does not have that region. Returns an empty body",
       "method": "DELETE",
       "path": "/endpoints/{id}/regions/{region}",
       "auth_required": true,
+      "rate_limit_category": "write",
       "parameters": {
         "path": {
           "id": { "type": "string", "format": "uuid", "required": true },
@@ -591,10 +676,11 @@
     },
     {
       "name": "get_endpoint_results",
-      "description": "Get paginated TLS scan results for a specific endpoint. Results are ordered by scannedAt descending",
+      "description": "Get paginated scan results for an endpoint, newest first (ordered by scannedAt). Results older than the plan's retention period are deleted daily",
       "method": "GET",
       "path": "/endpoints/{id}/results",
       "auth_required": true,
+      "rate_limit_category": "read",
       "parameters": {
         "path": {
           "id": { "type": "string", "format": "uuid", "required": true }
@@ -609,17 +695,35 @@
           {
             "id": "string (UUID)",
             "probeId": "string",
+            "endpointId": "string | null",
             "host": "string",
             "port": "number",
+            "sni": "string | null",
+            "userId": "string | null",
+            "probeMode": "string (connected | hosted) | null",
+            "probeRegion": "string | null",
             "connectionSuccess": "boolean",
+            "connectionError": "string | null",
             "latencyMs": "number | null",
             "tlsVersion": "string | null",
+            "cipherSuite": "string | null",
+            "ocspStapled": "boolean | null",
             "certSubject": "string | null",
+            "certSans": "string[] | null",
+            "certIssuer": "string | null",
+            "certSerialNumber": "string | null",
+            "certNotBefore": "ISO8601 | null",
+            "certNotAfter": "ISO8601 | null",
             "certDaysUntilExpiry": "number | null",
+            "certKeyType": "string | null",
+            "certKeySize": "number | null",
+            "certSignatureAlgorithm": "string | null",
+            "certFingerprint": "string | null",
+            "certChainDepth": "number | null",
+            "certChainComplete": "boolean | null",
             "certTrusted": "boolean | null",
-            "probeMode": "string (standalone | connected | hosted)",
-            "probeRegion": "string | null",
-            "scannedAt": "ISO8601"
+            "scannedAt": "ISO8601",
+            "createdAt": "ISO8601"
           }
         ],
         "total": "number"
@@ -627,53 +731,88 @@
     },
     {
       "name": "get_endpoint_latest_results",
-      "description": "Get the most recent scan result per probe for an endpoint. Useful for dashboard display showing current status across all probes",
+      "description": "Get the most recent scan result from each probe that has scanned this endpoint. Useful for current status across all probes",
       "method": "GET",
       "path": "/endpoints/{id}/results/latest",
       "auth_required": true,
+      "rate_limit_category": "read",
       "parameters": {
         "path": {
           "id": { "type": "string", "format": "uuid", "required": true }
         }
-      }
+      },
+      "response": ["object (same shape as a get_endpoint_results data item)"]
+    },
+    {
+      "name": "export_endpoint_results",
+      "description": "Download all stored scan results for an endpoint as a file attachment (not paginated), newest first. JSON is an array of scan result objects; CSV has one row per result",
+      "method": "GET",
+      "path": "/endpoints/{id}/results/export",
+      "auth_required": true,
+      "rate_limit_category": "read",
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "format": "uuid", "required": true }
+        },
+        "query": {
+          "format": { "type": "string", "enum": ["json", "csv"], "required": false, "default": "json" }
+        }
+      },
+      "response": "file (application/json or text/csv, named <host>_<port>_scan_results.<ext>)"
     },
     {
       "name": "register_probe",
-      "description": "Register or heartbeat a probe. Accepts user API key (connected mode) or service key (hosted mode). Updates lastSeenAt timestamp",
+      "description": "Register a probe, or heartbeat an existing one (same probeId). Sets status to 'active' and updates lastSeenAt. With a user API key or JWT the probe is linked to that user; with a service key it is a hosted probe with no owner",
       "method": "POST",
       "path": "/probes/register",
       "auth_required": true,
-      "auth_type": "dual (user API key or service key)",
+      "auth_type": "dual (service key, user API key, or JWT)",
+      "rate_limit_category": "write",
       "parameters": {
         "body": {
           "probeId": { "type": "string", "required": true },
           "name": { "type": "string", "required": true },
           "version": { "type": "string", "required": true },
           "mode": { "type": "string", "enum": ["standalone", "connected", "hosted"], "required": true },
-          "region": { "type": "string", "required": false },
+          "region": { "type": "string", "required": false, "description": "Required in practice for hosted probes; used to select endpoints by hosted region" },
           "os": { "type": "string", "required": true },
           "arch": { "type": "string", "required": true }
         }
+      },
+      "response": {
+        "id": "string",
+        "name": "string",
+        "version": "string",
+        "mode": "string",
+        "region": "string | null",
+        "os": "string",
+        "arch": "string",
+        "status": "string (active)",
+        "userId": "string | null",
+        "lastSeenAt": "ISO8601",
+        "createdAt": "ISO8601",
+        "updatedAt": "ISO8601"
       }
     },
     {
       "name": "submit_probe_report",
-      "description": "Submit TLS scan results from a probe. Each result is matched to a registered endpoint by host:port. Unmatched results are rejected for connected/hosted probes",
+      "description": "Submit TLS scan results from a registered probe (404 if the probeId is not registered). Each result is matched to the caller's endpoints by host and port. Use mode 'connected' with a user API key; 'hosted' is reserved for KrakenKey-operated probes using a service key, and standalone results are not stored. Results with no matching endpoint are skipped, not rejected",
       "method": "POST",
       "path": "/probes/report",
       "auth_required": true,
-      "auth_type": "dual (user API key or service key)",
+      "auth_type": "dual (service key, user API key, or JWT)",
+      "rate_limit_category": "write",
       "parameters": {
         "body": {
           "probeId": { "type": "string", "required": true },
-          "mode": { "type": "string", "enum": ["standalone", "connected", "hosted"], "required": true },
+          "mode": { "type": "string", "required": true, "description": "'connected' for self-hosted probes using a user API key" },
           "region": { "type": "string", "required": false },
-          "timestamp": { "type": "ISO8601", "required": true },
+          "timestamp": { "type": "ISO8601", "required": true, "description": "Stored as scannedAt on every result" },
           "results": {
             "type": "array",
             "required": true,
             "items": {
-              "endpoint": { "host": "string", "port": "number", "sni": "string (optional)" },
+              "endpoint": { "host": "string", "port": "integer", "sni": "string (optional)" },
               "connection": { "success": "boolean", "error": "string?", "latencyMs": "number?", "tlsVersion": "string?", "cipherSuite": "string?", "ocspStapled": "boolean?" },
               "certificate": "object (optional): subject, sans, issuer, serialNumber, notBefore, notAfter, daysUntilExpiry, keyType, keySize, signatureAlgorithm, fingerprint, chainDepth, chainComplete, trusted"
             }
@@ -681,24 +820,355 @@
         }
       },
       "response": {
-        "accepted": "number"
+        "accepted": "number (results stored)"
       }
     },
     {
       "name": "get_probe_config",
-      "description": "Fetch the endpoint list and scan interval for a probe. Connected probes get their owner's endpoints; hosted probes get endpoints with matching region",
+      "description": "Fetch the endpoints a probe should scan. With a user API key or JWT (connected probe): active endpoints owned by the caller that are assigned to this probe. With a service key (hosted probe): all active endpoints that have a hosted region matching the probe's registered region. Returns 404 if the probe is not registered",
       "method": "GET",
       "path": "/probes/{probeId}/config",
       "auth_required": true,
-      "auth_type": "dual (user API key or service key)",
+      "auth_type": "dual (service key, user API key, or JWT)",
+      "rate_limit_category": "read",
       "parameters": {
         "path": {
           "probeId": { "type": "string", "required": true }
         }
       },
       "response": {
-        "endpoints": [{ "host": "string", "port": "number", "sni": "string", "userId": "string" }],
-        "interval": "string (e.g., '60m')"
+        "endpoints": [{ "host": "string", "port": "number", "sni": "string (defaults to host)", "userId": "string", "scanNow": "boolean (present and true when a scan was requested in the last 5 minutes)" }],
+        "interval": "string (server-configured scan interval, e.g. '60m')"
+      }
+    },
+    {
+      "name": "public_scan",
+      "description": "Run an on-demand TLS scan of a public hostname. No authentication. Raw IP addresses are rejected, and hostnames that resolve to private or reserved addresses return 400. Returns 503 if the scanner is unavailable",
+      "method": "POST",
+      "path": "/public-scan",
+      "auth_required": false,
+      "rate_limit_category": "public",
+      "parameters": {
+        "body": {
+          "hostname": { "type": "string", "max_length": 253, "required": true, "description": "DNS name (letters, digits, hyphens, dots). No IPs, ports, or wildcards" },
+          "port": { "type": "integer", "enum": [443, 8443], "required": false, "default": 443 }
+        }
+      },
+      "response": {
+        "endpoint": { "host": "string", "port": "number", "sni": "string" },
+        "connection": { "success": "boolean", "error": "string?", "latencyMs": "number?", "tlsVersion": "string?", "cipherSuite": "string?", "ocspStapled": "boolean?" },
+        "certificate": "object (optional): subject, sans, issuer, serialNumber, notBefore, notAfter, daysUntilExpiry, keyType, keySize, signatureAlgorithm, fingerprint, chainDepth, chainComplete, trusted",
+        "scannedAt": "ISO8601"
+      }
+    },
+    {
+      "name": "submit_feedback",
+      "description": "Submit product feedback with a message and a 1-5 rating",
+      "method": "POST",
+      "path": "/feedback",
+      "auth_required": true,
+      "rate_limit_category": "write",
+      "parameters": {
+        "body": {
+          "message": { "type": "string", "max_length": 5000, "required": true },
+          "rating": { "type": "integer", "minimum": 1, "maximum": 5, "required": true }
+        }
+      },
+      "response": {
+        "id": "string (UUID)",
+        "message": "string",
+        "rating": "number",
+        "userId": "string",
+        "createdAt": "ISO8601"
+      }
+    },
+    {
+      "name": "create_organization",
+      "description": "Create an organization with the caller as owner. Requires a Team, Business, or Enterprise plan (402 otherwise); the owner's subscription becomes the org subscription. Returns 409 if the caller already belongs to an organization",
+      "method": "POST",
+      "path": "/organizations",
+      "auth_required": true,
+      "rate_limit_category": "write",
+      "parameters": {
+        "body": {
+          "name": { "type": "string", "min_length": 2, "max_length": 80, "required": true }
+        }
+      },
+      "response": {
+        "id": "string (UUID)",
+        "name": "string",
+        "ownerId": "string",
+        "status": "string (active)",
+        "createdAt": "ISO8601"
+      }
+    },
+    {
+      "name": "get_organization",
+      "description": "Get organization details including the member list",
+      "method": "GET",
+      "path": "/organizations/{id}",
+      "auth_required": true,
+      "rate_limit_category": "read",
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "format": "uuid", "required": true }
+        }
+      },
+      "response": {
+        "id": "string (UUID)",
+        "name": "string",
+        "ownerId": "string",
+        "status": "string (active | dissolving)",
+        "createdAt": "ISO8601",
+        "members": [{ "id": "string", "username": "string", "email": "string", "role": "string (owner | admin | member | viewer)", "organizationId": "string" }]
+      }
+    },
+    {
+      "name": "update_organization",
+      "description": "Rename an organization. Caller must be an owner or admin of this organization. Returns 409 while the organization is being dissolved",
+      "method": "PATCH",
+      "path": "/organizations/{id}",
+      "auth_required": true,
+      "rate_limit_category": "write",
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "format": "uuid", "required": true }
+        },
+        "body": {
+          "name": { "type": "string", "min_length": 2, "max_length": 80, "required": true }
+        }
+      },
+      "response": "object (same shape as get_organization)"
+    },
+    {
+      "name": "delete_organization",
+      "description": "Delete (dissolve) an organization. Owner only (403 otherwise). Dissolution runs in the background: the org is marked 'dissolving', members' domains, certificates, and API keys are transferred to the owner, members are detached, billing reverts to the owner personally, and the org is removed. Returns 204 with no body",
+      "method": "DELETE",
+      "path": "/organizations/{id}",
+      "auth_required": true,
+      "rate_limit_category": "write",
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "format": "uuid", "required": true }
+        }
+      }
+    },
+    {
+      "name": "invite_member",
+      "description": "Add an existing KrakenKey user to the organization by email (they must have logged in at least once). Caller must be an owner or admin. Returns 404 if no user has that email, 409 if they are in another org or have an active, uncanceled paid subscription. Returns 201 with no body",
+      "method": "POST",
+      "path": "/organizations/{id}/members",
+      "auth_required": true,
+      "rate_limit_category": "write",
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "format": "uuid", "required": true }
+        },
+        "body": {
+          "email": { "type": "string", "format": "email", "required": true },
+          "role": { "type": "string", "enum": ["admin", "member", "viewer"], "required": false, "default": "member" }
+        }
+      }
+    },
+    {
+      "name": "update_member_role",
+      "description": "Change a member's role. Caller must be an owner or admin. The owner's role cannot be changed here; use transfer_ownership. Returns 200 with no body",
+      "method": "PATCH",
+      "path": "/organizations/{id}/members/{userId}",
+      "auth_required": true,
+      "rate_limit_category": "write",
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "format": "uuid", "required": true },
+          "userId": { "type": "string", "required": true }
+        },
+        "body": {
+          "role": { "type": "string", "enum": ["admin", "member", "viewer"], "required": true }
+        }
+      }
+    },
+    {
+      "name": "remove_member",
+      "description": "Remove a member from the organization. Owners and admins can remove others; any member can remove themselves. The owner cannot be removed (400). Returns 204 with no body",
+      "method": "DELETE",
+      "path": "/organizations/{id}/members/{userId}",
+      "auth_required": true,
+      "rate_limit_category": "write",
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "format": "uuid", "required": true },
+          "userId": { "type": "string", "required": true }
+        }
+      }
+    },
+    {
+      "name": "transfer_ownership",
+      "description": "Make another member the owner. Only the current owner can call this; they become an admin. Returns 404 if no member of this org has that email. Returns 201 with no body",
+      "method": "POST",
+      "path": "/organizations/{id}/transfer-ownership",
+      "auth_required": true,
+      "rate_limit_category": "write",
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "format": "uuid", "required": true }
+        },
+        "body": {
+          "email": { "type": "string", "format": "email", "required": true, "description": "Email of the member who becomes owner" }
+        }
+      }
+    },
+    {
+      "name": "create_checkout_session",
+      "description": "Start a paid subscription. Returns a Stripe Checkout URL for the user to open in a browser. In an organization, only the owner can manage billing (403). Returns 400 if the plan is not available for purchase",
+      "method": "POST",
+      "path": "/billing/checkout",
+      "auth_required": true,
+      "rate_limit_category": "write",
+      "parameters": {
+        "body": {
+          "plan": { "type": "string", "enum": ["starter", "team", "business", "enterprise"], "required": true }
+        }
+      },
+      "response": {
+        "sessionUrl": "string (URL)"
+      }
+    },
+    {
+      "name": "get_subscription",
+      "description": "Get the current subscription (the org subscription for organization members). Users without a subscription record get a default free/active response",
+      "method": "GET",
+      "path": "/billing/subscription",
+      "auth_required": true,
+      "rate_limit_category": "read",
+      "parameters": {},
+      "response": {
+        "id": "string (UUID, omitted on the default free response)",
+        "plan": "string (free | starter | team | business | enterprise)",
+        "status": "string (active | past_due | canceled | incomplete | trialing)",
+        "currentPeriodEnd": "ISO8601 | null",
+        "cancelAtPeriodEnd": "boolean",
+        "organizationId": "string (UUID) | null",
+        "createdAt": "ISO8601 (omitted on the default free response)"
+      }
+    },
+    {
+      "name": "create_billing_portal_session",
+      "description": "Get a Stripe Customer Portal URL for managing payment methods, invoices, and cancellation. Org owner only when in an organization (403). Returns 404 if the user has no subscription record",
+      "method": "POST",
+      "path": "/billing/portal",
+      "auth_required": true,
+      "rate_limit_category": "write",
+      "parameters": {},
+      "response": {
+        "portalUrl": "string (URL)"
+      }
+    },
+    {
+      "name": "preview_upgrade",
+      "description": "Preview the immediate charge for upgrading an active paid subscription to a higher plan. The charge is the flat difference between the two plan prices (no day-based proration). Returns 404 with no active paid subscription (use create_checkout_session from free), 400 if the target is not higher than the current plan",
+      "method": "POST",
+      "path": "/billing/upgrade/preview",
+      "auth_required": true,
+      "rate_limit_category": "read",
+      "parameters": {
+        "body": {
+          "plan": { "type": "string", "enum": ["starter", "team", "business", "enterprise"], "required": true }
+        }
+      },
+      "response": {
+        "immediateAmountCents": "number",
+        "currency": "string",
+        "targetPlan": "string",
+        "currentPeriodEnd": "ISO8601"
+      }
+    },
+    {
+      "name": "upgrade_plan",
+      "description": "Upgrade an active paid subscription to a higher plan and charge the price difference immediately. Same preconditions and errors as preview_upgrade",
+      "method": "POST",
+      "path": "/billing/upgrade",
+      "auth_required": true,
+      "rate_limit_category": "write",
+      "parameters": {
+        "body": {
+          "plan": { "type": "string", "enum": ["starter", "team", "business", "enterprise"], "required": true }
+        }
+      },
+      "response": {
+        "plan": "string",
+        "status": "string",
+        "currentPeriodEnd": "ISO8601 | null",
+        "cancelAtPeriodEnd": "boolean"
+      }
+    },
+    {
+      "name": "list_users",
+      "description": "List all users. Admin only: the caller must be in the 'authentik Admins' group (403 otherwise)",
+      "method": "GET",
+      "path": "/users",
+      "auth_required": true,
+      "auth_type": "admin (JWT or user API key, caller in the 'authentik Admins' group)",
+      "rate_limit_category": "read",
+      "parameters": {},
+      "response": ["object (user record, same shape as get_user)"]
+    },
+    {
+      "name": "get_user",
+      "description": "Get a user record. Callers can read their own record; admins can read any (403 otherwise)",
+      "method": "GET",
+      "path": "/users/{id}",
+      "auth_required": true,
+      "rate_limit_category": "read",
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "required": true, "description": "User ID (the Authentik subject, same as get_profile id)" }
+        }
+      },
+      "response": {
+        "id": "string",
+        "username": "string",
+        "email": "string",
+        "groups": ["string"],
+        "displayName": "string | null",
+        "notificationPreferences": "object",
+        "createdAt": "ISO8601",
+        "role": "string | null",
+        "organizationId": "string | null"
+      }
+    },
+    {
+      "name": "update_user",
+      "description": "Update fields on a user record. Callers can update their own record; admins can update any (403 otherwise). Prefer update_profile for display name and notification settings",
+      "method": "PATCH",
+      "path": "/users/{id}",
+      "auth_required": true,
+      "rate_limit_category": "write",
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "required": true }
+        },
+        "body": {
+          "username": { "type": "string", "max_length": 100, "required": false },
+          "email": { "type": "string", "format": "email", "required": false }
+        }
+      },
+      "response": "object (database update result, not the updated user)"
+    },
+    {
+      "name": "delete_user",
+      "description": "Permanently delete a user account. Callers can delete their own account; admins can delete any (403 otherwise). Issued certificates are revoked with the CA (reason keyCompromise, best effort), then the user's certificates, domains, and API keys are deleted and their feedback is anonymized. Cannot be undone",
+      "method": "DELETE",
+      "path": "/users/{id}",
+      "auth_required": true,
+      "rate_limit_category": "write",
+      "parameters": {
+        "path": {
+          "id": { "type": "string", "required": true }
+        }
+      },
+      "response": {
+        "deleted": "boolean (true)",
+        "certsRevoked": "number"
       }
     }
   ]
