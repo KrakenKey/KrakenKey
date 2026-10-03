@@ -167,6 +167,25 @@ Step 2: Use it
 
 A JWT from the web login or an existing API key can create keys. Hitting the plan's API key limit returns 402. Expired keys get `401`, and the key's owner may get an email warning that an expired key was used. Repeated invalid keys from one IP lock that IP out of API key auth for a while (`429`).
 
+### Without any credential: browser login
+
+An agent or tool with no key can ask the user to approve one in the browser (OAuth device flow, RFC 8628):
+
+```
+POST /auth/device/code
+Body: { "clientName": "build-01" }
+→ { "deviceCode", "userCode": "BCDF-GHJK", "verificationUriComplete", "expiresIn": 600, "interval": 5 }
+
+# Send the user verificationUriComplete and userCode. Then, every `interval` seconds:
+POST /auth/device/token
+Body: { "deviceCode": "..." }
+→ { "status": "pending" }   (keep polling; "slow_down" means wait 5 seconds longer)
+→ { "status": "approved", "apiKey": "kk_...", "id": "...", "name": "CLI login: build-01" }
+→ { "status": "denied" } or { "status": "expired" }   (stop)
+```
+
+The key is created by the poll that finds the login approved and is returned only once. Approval itself needs a dashboard session, so an agent can't approve its own login.
+
 ## 7. Set Up Endpoint Monitoring
 
 Endpoints are scanned by probes. There are two ways to get scans:

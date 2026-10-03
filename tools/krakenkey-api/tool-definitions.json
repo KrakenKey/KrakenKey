@@ -162,6 +162,87 @@
       }
     },
     {
+      "name": "start_device_login",
+      "description": "Start a browser login for a CLI or agent that has no API key (OAuth device flow, RFC 8628). Show the user verificationUriComplete and userCode; they approve in the dashboard (which also works for sign-up). Then poll poll_device_login with deviceCode every interval seconds. Expires after expiresIn seconds",
+      "method": "POST",
+      "path": "/auth/device/code",
+      "auth_required": false,
+      "rate_limit_category": "public",
+      "parameters": {
+        "body": {
+          "clientName": { "type": "string", "max_length": 64, "required": false, "description": "Shown on the approval page and used in the key name; letters, digits, spaces and . _ - @ ( ) only" }
+        }
+      },
+      "response": {
+        "deviceCode": "string (secret; used only for polling)",
+        "userCode": "string (e.g. BCDF-GHJK)",
+        "verificationUri": "string (https://app.krakenkey.io/device)",
+        "verificationUriComplete": "string (link with the code filled in)",
+        "expiresIn": "number (seconds, 600)",
+        "interval": "number (seconds between polls, 5)"
+      }
+    },
+    {
+      "name": "poll_device_login",
+      "description": "Poll a browser login. Returns pending until the user acts; slow_down if polled faster than interval (add 5 seconds); denied or expired to stop. The poll that finds the login approved creates an API key named 'CLI login: <clientName>' and returns it once. A plan API key limit reached after approval returns 402",
+      "method": "POST",
+      "path": "/auth/device/token",
+      "auth_required": false,
+      "rate_limit_category": "public",
+      "parameters": {
+        "body": {
+          "deviceCode": { "type": "string", "required": true }
+        }
+      },
+      "response": {
+        "status": "string (pending | slow_down | denied | expired | approved)",
+        "apiKey": "string (kk_..., only when approved, shown once)",
+        "id": "string (UUID, only when approved)",
+        "name": "string (only when approved)"
+      }
+    },
+    {
+      "name": "get_device_login",
+      "description": "Show a pending browser login (user code, client name, requesting IP, start time). Used by the dashboard approval page; requires a dashboard session, and API keys get 403",
+      "method": "GET",
+      "path": "/auth/device/{userCode}",
+      "auth_required": true,
+      "rate_limit_category": "write",
+      "parameters": {
+        "path": { "userCode": { "type": "string", "required": true } }
+      },
+      "response": {
+        "userCode": "string",
+        "clientName": "string",
+        "ip": "string",
+        "createdAt": "ISO8601"
+      }
+    },
+    {
+      "name": "approve_device_login",
+      "description": "Approve a pending browser login for the signed-in user. Requires a dashboard session; API keys get 403, so an agent cannot approve its own login. Returns 402 when the plan's API key limit is reached and 404 when the code is unknown or expired",
+      "method": "POST",
+      "path": "/auth/device/approve",
+      "auth_required": true,
+      "rate_limit_category": "write",
+      "parameters": {
+        "body": { "userCode": { "type": "string", "required": true } }
+      },
+      "response": { "name": "string (name the new key will get)" }
+    },
+    {
+      "name": "deny_device_login",
+      "description": "Deny a pending browser login. Requires a dashboard session; API keys get 403",
+      "method": "POST",
+      "path": "/auth/device/deny",
+      "auth_required": true,
+      "rate_limit_category": "write",
+      "parameters": {
+        "body": { "userCode": { "type": "string", "required": true } }
+      },
+      "response": { "message": "string" }
+    },
+    {
       "name": "delete_api_key",
       "description": "Delete one of the authenticated user's API keys. Returns 404 if the key does not exist or belongs to someone else",
       "method": "DELETE",

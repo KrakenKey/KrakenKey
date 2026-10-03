@@ -1,6 +1,6 @@
 # KrakenKey CLI Workflows
 
-Common multi-step workflows using the `krakenkey` CLI (v0.5.0). See [README.md](README.md) for global flags, output formats, and exit codes.
+Common multi-step workflows using the `krakenkey` CLI (v0.6.0). See [README.md](README.md) for global flags, output formats, and exit codes.
 
 Global flags (`--output`, `--api-key`, `--api-url`, `--no-color`) go **before** the command.
 
@@ -15,10 +15,17 @@ go build -o krakenkey ./cmd/krakenkey
 
 krakenkey version
 
-# Option A: env var (preferred for CI and agents; nothing is written to disk)
+# Option A: browser approval (preferred for agents working with a person).
+# Prints a link and code to stderr; the user approves in the dashboard and the
+# new key is saved to ~/.config/krakenkey/config.yaml. Waits up to 10 minutes,
+# so run it in the background and send the user the link.
+krakenkey auth login --web --no-browser > /tmp/krakenkey-login.log 2>&1 &
+sleep 3; cat /tmp/krakenkey-login.log
+
+# Option B: env var (preferred for CI; nothing is written to disk)
 export KK_API_KEY=kk_abc123...
 
-# Option B: save the key to ~/.config/krakenkey/config.yaml
+# Option C: save an existing key to the config file
 # (the key is checked against the API before it is saved)
 krakenkey auth login --api-key kk_abc123...
 
