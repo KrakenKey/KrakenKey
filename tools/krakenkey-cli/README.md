@@ -1,6 +1,6 @@
 # KrakenKey CLI Tools for AI Agents
 
-Structured tool definitions for AI agents to use the `krakenkey` CLI (v0.5.0) for TLS certificate management and endpoint monitoring.
+Structured tool definitions for AI agents to use the `krakenkey` CLI (v0.6.0) for TLS certificate management and endpoint monitoring.
 
 ## Files
 
@@ -9,7 +9,7 @@ Structured tool definitions for AI agents to use the `krakenkey` CLI (v0.5.0) fo
 
 ## Installation
 
-Pre-built binaries are on [GitHub Releases](https://github.com/KrakenKey/cli/releases) for Linux and macOS (amd64, arm64) and Windows (amd64). Archives are named `krakenkey_<version>_<os>_<arch>.tar.gz` (`.zip` on Windows), for example `krakenkey_0.5.0_linux_amd64.tar.gz`.
+Pre-built binaries are on [GitHub Releases](https://github.com/KrakenKey/cli/releases) for Linux and macOS (amd64, arm64) and Windows (amd64). Archives are named `krakenkey_<version>_<os>_<arch>.tar.gz` (`.zip` on Windows), for example `krakenkey_0.6.0_linux_amd64.tar.gz`.
 
 ```bash
 # go install

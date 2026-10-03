@@ -144,6 +144,11 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | POST | `/auth/api-keys` | Yes | Create API key (returns `kk_...` once) |
 | DELETE | `/auth/api-keys/:id` | Yes | Delete API key |
 | POST | `/auth/confirm-auto-renewal` | Yes | Confirm auto-renewal intent |
+| POST | `/auth/device/code` | No | Start a CLI browser login (device flow) |
+| POST | `/auth/device/token` | No | Poll a browser login; returns a new API key once approved |
+| GET | `/auth/device/:userCode` | JWT only | Show a pending browser login (approval page) |
+| POST | `/auth/device/approve` | JWT only | Approve a browser login |
+| POST | `/auth/device/deny` | JWT only | Deny a browser login |
 | GET | `/domains` | Yes | List domains |
 | POST | `/domains` | Yes | Register domain |
 | GET | `/domains/:id` | Yes | Get domain details |
@@ -325,7 +330,8 @@ cd cli && go build -o krakenkey ./cmd/krakenkey
 ### Authentication
 
 ```bash
-krakenkey auth login --api-key kk_...    # Save API key to config
+krakenkey auth login --web               # Approve in the browser; saves a new API key
+krakenkey auth login --api-key kk_...    # Save an existing API key to config
 krakenkey auth status                     # Show current user
 krakenkey auth logout                     # Remove stored key
 ```
@@ -336,7 +342,7 @@ Config stored at `~/.config/krakenkey/config.yaml`. API key can also be set via 
 
 | Command | Subcommands | Description |
 |---------|-------------|-------------|
-| `auth` | login, logout, status, keys (list/create/delete) | Authentication and API key management |
+| `auth` | login (`--web` for browser approval), logout, status, keys (list/create/delete) | Authentication and API key management |
 | `domain` | add, list, show, check, verify, delete | Domain registration, DNS record checks and verification |
 | `cert` | issue, submit, list, show, download, renew, revoke, retry, update, delete | Certificate lifecycle |
 | `endpoint` | add, list, show, enable, disable, delete, scan, probes, region (add/remove), probe (add/remove) | Endpoint monitoring |
@@ -400,6 +406,6 @@ When generating user-facing content: avoid em dashes, "delve", "leverage", "elev
 See [tools/](tools/) for structured skill definitions that AI agents can use:
 
 - **[krakenkey-api](tools/krakenkey-api/)** -- Tool definitions and workflows for the KrakenKey REST API, one tool per public route: certificate lifecycle and chain download, domain verification, endpoint monitoring, connected probes, public scan, organizations, users, and billing. OAuth redirects, the Stripe webhook, and `/metrics` are intentionally left out.
-- **[krakenkey-cli](tools/krakenkey-cli/)** -- Tool definitions and workflows for the `krakenkey` CLI (v0.5.0). Covers all commands: auth, domain, cert, endpoint, account, and version.
+- **[krakenkey-cli](tools/krakenkey-cli/)** -- Tool definitions and workflows for the `krakenkey` CLI (v0.6.0). Covers all commands: auth, domain, cert, endpoint, account, and version.
 
 When the API or CLI changes, update the matching `tools/` files in the same release. The definitions are checked against `app` main and the latest `cli` release, so drift shows up as wrong paths or missing flags for agents.

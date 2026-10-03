@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "name": "krakenkey-cli",
-  "description": "Tools for using the KrakenKey CLI (v0.5.0) for TLS certificate management and endpoint monitoring. Global flags must come before the command (krakenkey --output json cert list); flags placed after the command are not treated as global flags.",
-  "version": "0.5.0",
+  "description": "Tools for using the KrakenKey CLI (v0.6.0) for TLS certificate management and endpoint monitoring. Global flags must come before the command (krakenkey --output json cert list); flags placed after the command are not treated as global flags.",
+  "version": "0.6.0",
   "binary": "krakenkey",
   "global_flags": {
     "--api-url": { "type": "string", "env": "KK_API_URL", "default": "https://api.krakenkey.io", "description": "API base URL" },
@@ -15,12 +15,14 @@
   "tools": [
     {
       "name": "auth_login",
-      "description": "Validate an API key against the API and save it to the config file (~/.config/krakenkey/config.yaml, mode 0600). Prompts on stdin if --api-key is not given",
+      "description": "Save an API key to the config file (~/.config/krakenkey/config.yaml, mode 0600) after checking it against the API. With --web, no key is needed: the CLI prints an approval link (app.krakenkey.io/device?code=...) and a short code to stderr, waits up to 10 minutes for the user to approve in the dashboard (which also works for sign-up), then saves the new key, named 'CLI login: <hostname>'. Run --web in the background and pass the link to the user. Without --web or --api-key it prompts on stdin",
       "command": "auth login",
       "flags": {
-        "--api-key": { "type": "string", "required": false, "description": "API key to save (prompted interactively if not provided)" }
+        "--api-key": { "type": "string", "required": false, "description": "API key to save (prompted interactively if neither this nor --web is given)" },
+        "--web": { "type": "boolean", "required": false, "default": false, "description": "Sign in by approving a link in the browser; creates and saves a new API key" },
+        "--no-browser": { "type": "boolean", "required": false, "default": false, "description": "With --web, print the link without trying to open a browser" }
       },
-      "example": "krakenkey auth login --api-key kk_abc123..."
+      "example": "krakenkey auth login --web --no-browser"
     },
     {
       "name": "auth_logout",
