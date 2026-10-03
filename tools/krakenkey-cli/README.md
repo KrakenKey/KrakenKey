@@ -74,7 +74,7 @@ Global flags must come **before** the command: `krakenkey --output json cert lis
 
 ## Output Formats
 
-- **JSON** (`--output json` or `KK_OUTPUT=json`): indented JSON on stdout, nothing else. Command errors go to stderr as `{"error":"..."}`; a config load failure is printed as plain text. Commands that have no response body (`auth login`, `auth logout`, `auth keys delete`, `domain delete`, `cert delete`, `endpoint delete`, `endpoint region remove`, `endpoint probe remove`) print nothing on success; check the exit code.
+- **JSON** (`--output json` or `KK_OUTPUT=json`): indented JSON on stdout, nothing else. Command errors go to stderr as `{"error":"..."}`; a config load failure is printed as plain text. Commands that have no response body (`auth login`, `auth logout`, `domain delete`, `cert delete`, `endpoint delete`, `endpoint region remove`, `endpoint probe remove`) print nothing on success; check the exit code.
 - **Text** (default): status lines, aligned tables, and a spinner on stderr while `--wait` polls. Current builds also print the raw JSON response on stdout in text mode, so never parse text output.
 
 Agents should always use `--output json` (or set `KK_OUTPUT=json`) and parse stdout with `jq` or a JSON parser.

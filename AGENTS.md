@@ -123,10 +123,10 @@ OpenAPI spec: `GET /swagger-json` (always available). Swagger UI: `GET /swagger`
 Three methods, all via `Authorization: Bearer <token>`:
 
 1. **JWT** -- obtained through Authentik OAuth flow (`/auth/login` -> callback -> JWT)
-2. **User API Key** -- persistent keys prefixed `kk_`, created via `POST /auth/api-keys`. Used by CLI and connected probes.
+2. **User API Key** -- persistent keys prefixed `kk_`, created in the dashboard or through the browser login (`/auth/device/*`, `krakenkey auth login --web`). Used by CLI and connected probes.
 3. **Service Key** -- internal keys prefixed `kk_svc_`, for hosted probe infrastructure. Seeded from `KK_PROBE_API_KEY` env var.
 
-The probe endpoints (`/probes/*`) accept either user API keys or service keys (dual auth). All other authenticated endpoints accept JWT or user API keys.
+The probe endpoints (`/probes/*`) accept either user API keys or service keys (dual auth). All other authenticated endpoints accept JWT or user API keys, except those marked "JWT only": API keys get `403` there (`@SessionOnly()`, enforced in `JwtOrApiKeyGuard`), so a key can't create or delete keys, change or delete the user, write to organizations, or start billing changes. A request made with an API key is never treated as admin. The full list is pinned in `backend/src/auth/decorators/session-only.decorator.spec.ts`.
 
 ### Endpoints
 
@@ -141,8 +141,8 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | GET | `/auth/profile` | Yes | Current user profile with resource counts |
 | PATCH | `/auth/profile` | Yes | Update profile / notification prefs |
 | GET | `/auth/api-keys` | Yes | List API keys |
-| POST | `/auth/api-keys` | Yes | Create API key (returns `kk_...` once) |
-| DELETE | `/auth/api-keys/:id` | Yes | Delete API key |
+| POST | `/auth/api-keys` | JWT only | Create API key (returns `kk_...` once) |
+| DELETE | `/auth/api-keys/:id` | JWT only | Delete API key |
 | POST | `/auth/confirm-auto-renewal` | Yes | Confirm auto-renewal intent |
 | POST | `/auth/device/code` | No | Start a CLI browser login (device flow) |
 | POST | `/auth/device/token` | No | Poll a browser login; returns a new API key once approved |
@@ -184,21 +184,21 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | POST | `/public-scan` | No | On-demand TLS scan; SSRF-protected, per-IP rate-limited |
 | GET | `/users` | Yes | List users (admin only) |
 | GET | `/users/:id` | Yes | Get user (own record or admin) |
-| PATCH | `/users/:id` | Yes | Update user (own record or admin) |
-| DELETE | `/users/:id` | Yes | Delete user, cascades (own record or admin) |
-| POST | `/organizations` | Yes | Create organization |
+| PATCH | `/users/:id` | JWT only | Update user (own record or admin) |
+| DELETE | `/users/:id` | JWT only | Delete user, cascades (own record or admin) |
+| POST | `/organizations` | JWT only | Create organization |
 | GET | `/organizations/:id` | Yes | Get org with members |
-| PATCH | `/organizations/:id` | Yes | Update org |
-| DELETE | `/organizations/:id` | Yes | Delete org (owner only) |
-| POST | `/organizations/:id/members` | Yes | Invite member |
-| PATCH | `/organizations/:id/members/:userId` | Yes | Update member role |
-| DELETE | `/organizations/:id/members/:userId` | Yes | Remove member |
-| POST | `/organizations/:id/transfer-ownership` | Yes | Transfer org ownership |
-| POST | `/billing/checkout` | Yes | Create Stripe checkout session |
+| PATCH | `/organizations/:id` | JWT only | Update org |
+| DELETE | `/organizations/:id` | JWT only | Delete org (owner only) |
+| POST | `/organizations/:id/members` | JWT only | Invite member |
+| PATCH | `/organizations/:id/members/:userId` | JWT only | Update member role |
+| DELETE | `/organizations/:id/members/:userId` | JWT only | Remove member |
+| POST | `/organizations/:id/transfer-ownership` | JWT only | Transfer org ownership |
+| POST | `/billing/checkout` | JWT only | Create Stripe checkout session |
 | GET | `/billing/subscription` | Yes | Get subscription status |
-| POST | `/billing/portal` | Yes | Create Stripe portal session |
+| POST | `/billing/portal` | JWT only | Create Stripe portal session |
 | POST | `/billing/upgrade/preview` | Yes | Preview upgrade cost |
-| POST | `/billing/upgrade` | Yes | Upgrade subscription |
+| POST | `/billing/upgrade` | JWT only | Upgrade subscription |
 | POST | `/feedback` | Yes | Submit feedback |
 
 "Dual" auth means the endpoint accepts either a user API key (`kk_`) or a service key (`kk_svc_`).
@@ -342,7 +342,7 @@ Config stored at `~/.config/krakenkey/config.yaml`. API key can also be set via 
 
 | Command | Subcommands | Description |
 |---------|-------------|-------------|
-| `auth` | login (`--web` for browser approval), logout, status, keys (list/create/delete) | Authentication and API key management |
+| `auth` | login (`--web` for browser approval), logout, status, keys (list; create/delete need a dashboard session) | Authentication and API key management |
 | `domain` | add, list, show, check, verify, delete | Domain registration, DNS record checks and verification |
 | `cert` | issue, submit, list, show, download, renew, revoke, retry, update, delete | Certificate lifecycle |
 | `endpoint` | add, list, show, enable, disable, delete, scan, probes, region (add/remove), probe (add/remove) | Endpoint monitoring |

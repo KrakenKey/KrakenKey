@@ -5,7 +5,7 @@ Structured tool definitions for AI agents to work with the KrakenKey REST API.
 ## Files
 
 - `tool-definitions.json`: machine-readable tool definitions with parameters, auth requirements, rate limit category, and response shapes. Works with the function-calling / tool-use formats most LLM frameworks use.
-- `workflows.md`: multi-step workflows (verify a domain, issue and renew certificates, download the full chain, set up monitoring, run a public scan, manage orgs and billing), plus error handling, plan limits, and rate limits.
+- `workflows.md`: multi-step workflows (verify a domain, issue and renew certificates, download the full chain, set up monitoring, run a public scan, read org and billing state), plus error handling, plan limits, and rate limits.
 
 ## Base URLs
 
@@ -26,13 +26,13 @@ Authorization: Bearer <token>
 
 | Token | Format | Where it comes from | Accepted on |
 |-------|--------|---------------------|-------------|
-| User API key | `kk_...` | `POST /auth/api-keys` (shown once) | All authenticated routes |
-| JWT | OIDC access token | Browser login through Authentik (web app) | All authenticated routes |
+| User API key | `kk_...` | The dashboard (API Keys), or the browser login flow in `workflows.md` | All authenticated routes except the dashboard-only ones below |
+| JWT | OIDC access token | Browser login through Authentik (web app) | All authenticated routes, including dashboard-only |
 | Service key | `kk_svc_...` | Issued by KrakenKey for its hosted probes | Probe routes only: `/probes/register`, `/probes/report`, `/probes/{probeId}/config` |
 
 The probe routes accept any of the three ("dual" auth in the tool definitions). Every other authenticated route accepts a user API key or a JWT and rejects service keys.
 
-`GET /users` is admin only: the caller must be in the `authentik Admins` group. `GET`, `PATCH`, and `DELETE /users/{id}` work on the caller's own record, or any record for admins.
+`GET /users` is admin only: the caller must be in the `authentik Admins` group. `GET /users/{id}` works on the caller's own record, or any record for admins. A request made with an API key is never treated as admin.
 
 Agents should use a user API key. Expired keys return `401`. Repeated invalid keys from one IP lock that IP out of API key auth for a period (`429`).
 
@@ -59,18 +59,31 @@ Limits depend on the user's plan and the route's category (`rate_limit_category`
 | Area | Tools |
 |------|-------|
 | Health and status | `get_api_status`, `liveness_check`, `health_check` |
-| Profile and API keys | `get_profile`, `update_profile`, `confirm_auto_renewal`, `list_api_keys`, `create_api_key`, `delete_api_key` |
+| Profile and API keys | `get_profile`, `update_profile`, `confirm_auto_renewal`, `list_api_keys` |
+| Browser login | `start_device_login`, `poll_device_login` |
 | Domains | `list_domains`, `register_domain`, `get_domain`, `verify_domain`, `delete_domain` |
 | Certificates | `list_certificates`, `submit_csr`, `get_certificate`, `get_certificate_details`, `get_certificate_chain`, `update_certificate`, `renew_certificate`, `retry_certificate`, `revoke_certificate`, `delete_certificate` |
 | Endpoints | `list_endpoints`, `create_endpoint`, `get_endpoint`, `update_endpoint`, `delete_endpoint`, `request_endpoint_scan`, `list_my_probes`, `assign_probes`, `unassign_probe`, `add_hosted_region`, `remove_hosted_region`, `get_endpoint_results`, `get_endpoint_latest_results`, `export_endpoint_results` |
 | Probes | `register_probe`, `submit_probe_report`, `get_probe_config` |
 | Public scan | `public_scan` |
 | Feedback | `submit_feedback` |
-| Organizations | `create_organization`, `get_organization`, `update_organization`, `delete_organization`, `invite_member`, `update_member_role`, `remove_member`, `transfer_ownership` |
-| Billing | `create_checkout_session`, `get_subscription`, `create_billing_portal_session`, `preview_upgrade`, `upgrade_plan` |
-| Users | `list_users`, `get_user`, `update_user`, `delete_user` |
+| Organizations | `get_organization` |
+| Billing | `get_subscription`, `preview_upgrade` |
+| Users | `list_users`, `get_user` |
 
-60 tools in total.
+48 tools in total.
+
+## Dashboard Only
+
+These routes refuse API keys with a `403` ("API keys cannot be used for this action. Sign in to the dashboard instead."), so they have no tool definition. A leaked key can't mint new keys, take over the account, or change the organization or billing. When a task needs one of them, tell the user what to do in the dashboard at app.krakenkey.io.
+
+| Route | Dashboard page |
+|-------|----------------|
+| `POST /auth/api-keys`, `DELETE /auth/api-keys/{id}` | API Keys. To give a machine its own key, run the browser login flow there instead |
+| `GET /auth/device/{userCode}`, `POST /auth/device/approve`, `POST /auth/device/deny` | The approval page linked from `start_device_login` (an agent can't approve its own login) |
+| `PATCH /users/{id}`, `DELETE /users/{id}` | Settings |
+| `POST /organizations`, `PATCH` and `DELETE /organizations/{id}`, `POST /organizations/{id}/members`, `PATCH` and `DELETE /organizations/{id}/members/{userId}`, `POST /organizations/{id}/transfer-ownership` | Organizations |
+| `POST /billing/checkout`, `POST /billing/portal`, `POST /billing/upgrade` | Billing |
 
 ## Intentionally Not Covered
 
