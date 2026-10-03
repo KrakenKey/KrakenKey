@@ -82,7 +82,7 @@ Errors when submitting:
 
 When the status is `failed`:
 
-- The API does not expose the failure reason. The account owner receives a failure email (unless they turned off `cert_failed` notifications) containing the error.
+- `failureReason` on the certificate holds the error from the last failed attempt; it is cleared when the next attempt starts. The account owner also gets a failure email unless they turned off `cert_failed` notifications.
 - The most common cause is a missing or wrong `_acme-challenge` CNAME. KrakenKey checks the CNAME before it contacts the CA, and a missing or mismatched record fails the request right away with no retries, with a message naming the exact record to create. Have the user check the CNAME for every name in the CSR, then call `POST /certs/tls/{id}/retry`.
 - CA policy refusals (including CAA records that block Let's Encrypt) and CA rate limits also fail immediately. Transient errors are retried automatically (3 attempts in total) before the status becomes `failed`.
 - `retry` counts against the same plan limits as a new request. Retrying without fixing a permanent cause fails again.

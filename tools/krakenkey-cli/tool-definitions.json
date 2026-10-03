@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "name": "krakenkey-cli",
-  "description": "Tools for using the KrakenKey CLI (v0.4.0) for TLS certificate management and endpoint monitoring. Global flags must come before the command (krakenkey --output json cert list); flags placed after the command are not treated as global flags.",
-  "version": "0.4.0",
+  "description": "Tools for using the KrakenKey CLI (v0.5.0) for TLS certificate management and endpoint monitoring. Global flags must come before the command (krakenkey --output json cert list); flags placed after the command are not treated as global flags.",
+  "version": "0.5.0",
   "binary": "krakenkey",
   "global_flags": {
     "--api-url": { "type": "string", "env": "KK_API_URL", "default": "https://api.krakenkey.io", "description": "API base URL" },
@@ -59,7 +59,7 @@
     },
     {
       "name": "domain_add",
-      "description": "Register a domain and print the TXT verification record (name: the domain itself, value: krakenkey-site-verification=...). The CLI does not print the _acme-challenge CNAME that issuance also requires",
+      "description": "Register a domain and print the DNS records it needs: the ownership TXT (name: the domain itself, value: krakenkey-site-verification=...) and the domain's _acme-challenge CNAME. JSON output adds dnsRecords: [{type, name, value}]. Other names on a certificate (e.g. www) need their own CNAME; domain_check lists and checks them",
       "command": "domain add",
       "args": ["hostname"],
       "example": "krakenkey domain add example.com"
@@ -76,6 +76,19 @@
       "command": "domain show",
       "args": ["id"],
       "example": "krakenkey domain show <uuid>"
+    },
+    {
+      "name": "domain_check",
+      "description": "Check the DNS records for the names on a certificate: one _acme-challenge CNAME per name (a wildcard shares its parent's record) and, when the API key works, the ownership TXT of the registered domain covering them. Each record is ok, missing, wrong (points elsewhere; found shows the current target), conflict (TXT records sit where the CNAME must go), unregistered (no registered domain covers the name) or skipped (no API key, TXT not checked). Exits 1 until every record is in place. JSON: {ready, records: [{type, name, expected, found, status, detail}]}",
+      "command": "domain check",
+      "args": ["name..."],
+      "flags": {
+        "--resolver": { "type": "string", "required": false, "default": "system resolver", "description": "DNS server to query, e.g. 1.1.1.1 (host or host:port)" },
+        "--wait": { "type": "boolean", "required": false, "default": false, "description": "Re-check until every record is in place" },
+        "--poll-interval": { "type": "string", "required": false, "default": "30s", "description": "How often to re-check (Go duration)" },
+        "--poll-timeout": { "type": "string", "required": false, "default": "15m", "description": "Maximum time to wait (Go duration)" }
+      },
+      "example": "krakenkey --output json domain check example.com www.example.com --resolver 1.1.1.1 --wait"
     },
     {
       "name": "domain_verify",
@@ -181,7 +194,7 @@
     },
     {
       "name": "cert_issue",
-      "description": "Generate a private key and CSR locally, submit the CSR, and optionally wait for issuance. The private key never leaves the machine. The CN is always included as a SAN. Key (0600) and CSR are written immediately; cert, chain, and fullchain files are written only with --wait. Every name in the CSR needs a verified domain and an _acme-challenge CNAME, or issuance fails",
+      "description": "Generate a private key and CSR locally, submit the CSR, and optionally wait for issuance. The private key never leaves the machine. The CN is always included as a SAN. Key (0600) and CSR are written immediately; cert, chain, and fullchain files are written only with --wait. Every name in the CSR needs a verified domain and an _acme-challenge CNAME, or issuance fails. With --wait, a failed certificate exits 1 and the error ends with the API's failure reason",
       "command": "cert issue",
       "flags": {
         "--domain": { "type": "string", "required": true, "description": "Primary domain (CN)" },
@@ -206,7 +219,7 @@
     },
     {
       "name": "cert_submit",
-      "description": "Submit an existing CSR PEM file for issuance and optionally wait. Output file names default to the CSR's CN (or the cert ID if there is no CN)",
+      "description": "Submit an existing CSR PEM file for issuance and optionally wait. Output file names default to the CSR's CN (or the cert ID if there is no CN). With --wait, a failed certificate exits 1 and the error ends with the API's failure reason",
       "command": "cert submit",
       "flags": {
         "--csr": { "type": "string", "required": true, "description": "Path to CSR PEM file" },
@@ -231,7 +244,7 @@
     },
     {
       "name": "cert_show",
-      "description": "Show certificate details. For issued certs, text output adds serial, issuer, validity, fingerprint, and each intermediate in the chain. JSON output is the certificate record (includes crtPem and chainPem)",
+      "description": "Show certificate details. For issued certs, text output adds serial, issuer, validity, fingerprint, and each intermediate in the chain. JSON output is the certificate record (includes crtPem and chainPem). For failed certs, text output adds a Reason line and JSON includes failureReason",
       "command": "cert show",
       "args": ["id"],
       "example": "krakenkey cert show 42"
@@ -249,7 +262,7 @@
     },
     {
       "name": "cert_renew",
-      "description": "Trigger renewal of a certificate. Renewal reuses the stored CSR, so the existing private key stays valid. Does not write files; run cert download afterward",
+      "description": "Trigger renewal of a certificate. Renewal reuses the stored CSR, so the existing private key stays valid. Does not write files; run cert download afterward. With --wait, a failed certificate exits 1 and the error ends with the API's failure reason",
       "command": "cert renew",
       "args": ["id"],
       "flags": {
@@ -271,7 +284,7 @@
     },
     {
       "name": "cert_retry",
-      "description": "Retry a failed issuance with the same CSR, for example after fixing a missing _acme-challenge CNAME. Does not write files; run cert download afterward",
+      "description": "Retry a failed issuance with the same CSR, for example after fixing a missing _acme-challenge CNAME. Does not write files; run cert download afterward. With --wait, a failed certificate exits 1 and the error ends with the API's failure reason",
       "command": "cert retry",
       "args": ["id"],
       "flags": {
