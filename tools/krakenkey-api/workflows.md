@@ -306,41 +306,14 @@ No auth needed. Rate limited in the `public` category (30/min per IP when unauth
 
 ## 11. Organizations
 
-Creating an organization requires a Team plan or higher (402 otherwise). Members share domains, certificates, and endpoints, and plan limits are counted across all members.
+Organizations are managed in the dashboard (Organizations page). With an API key an agent can only read one:
 
 ```
-# Create (caller becomes owner; 409 if already in an org)
-POST /organizations
-Body: { "name": "My Team" }
-
 # Read, including members
 GET /organizations/{id}
-
-# Rename (owner or admin)
-PATCH /organizations/{id}
-Body: { "name": "Platform Team" }
-
-# Add an existing user by email (owner or admin)
-# 404 if they never logged in; 409 if they are in another org or have an active paid plan
-POST /organizations/{id}/members
-Body: { "email": "colleague@example.com", "role": "member" }    (admin | member | viewer)
-
-# Change a role (owner or admin; not the owner's role)
-PATCH /organizations/{id}/members/{userId}
-Body: { "role": "admin" }
-
-# Remove a member (owner or admin, or a member removing themselves; never the owner)
-DELETE /organizations/{id}/members/{userId}
-
-# Transfer ownership (owner only; previous owner becomes admin)
-POST /organizations/{id}/transfer-ownership
-Body: { "email": "new-owner@example.com" }
-
-# Dissolve (owner only; runs in the background)
-DELETE /organizations/{id}
 ```
 
-While an organization is dissolving, member and settings changes return `409`.
+Creating, renaming, and dissolving an organization, inviting and removing members, changing roles, and transferring ownership return `403` to API keys. Creating one needs a Team plan or higher. Members share domains, certificates, and endpoints, and plan limits are counted across all members.
 
 ## 12. Subscription and Upgrades
 
@@ -348,27 +321,14 @@ While an organization is dissolving, member and settings changes return `409`.
 # Current plan (users with no subscription get plan "free", status "active")
 GET /billing/subscription
 
-# Free -> paid: send the user to Stripe Checkout
-POST /billing/checkout
-Body: { "plan": "starter" }
-Response: { "sessionUrl": "https://checkout.stripe.com/..." }
-
-# Paid -> higher paid plan: preview, then upgrade
+# Paid -> higher paid plan: preview the charge
 POST /billing/upgrade/preview
 Body: { "plan": "team" }
 Response: { "immediateAmountCents": 5000, "currency": "usd", "targetPlan": "team",
             "currentPeriodEnd": "..." }
-
-POST /billing/upgrade
-Body: { "plan": "team" }
-Response: { "plan": "team", "status": "active", "currentPeriodEnd": "...", "cancelAtPeriodEnd": false }
-
-# Payment methods, invoices, cancellation
-POST /billing/portal
-Response: { "portalUrl": "https://billing.stripe.com/..." }
 ```
 
-The upgrade charge is the flat difference between the two plan prices, charged immediately. Upgrade and preview return `404` without an active paid subscription and `400` if the target plan is not higher than the current one. In an organization only the owner can use checkout, portal, preview, and upgrade (`403` for other members). Always confirm with the user before calling `upgrade`, since it charges their card.
+Checkout, upgrade, and the Stripe portal return `403` to API keys. To change plan, send the user to the Billing page in the dashboard. Preview returns `404` without an active paid subscription and `400` if the target plan is not higher than the current one. In an organization only the owner can use billing (`403` for other members).
 
 ## Plan Limits
 
@@ -408,7 +368,7 @@ Status codes to handle:
 - `400`: fix the request. Validation errors, or the resource is in the wrong state (for example renewing a certificate that is not `issued`). Read `message`.
 - `401`: missing, invalid, or expired token or API key. Do not retry with the same credentials.
 - `402`: plan limit reached (domains, API keys, certificate limits) or a feature that needs a higher plan (organizations). `message` names the limit, for example "Monthly certificate limit reached". Tell the user; retrying will not help until they upgrade or free up capacity.
-- `403`: not allowed. Endpoint and hosted-region plan limits ("Endpoint limit reached", "Hosted monitoring is not available on your plan"), org role checks, billing outside the org owner, or admin-only routes.
+- `403`: not allowed. A dashboard-only action called with an API key ("API keys cannot be used for this action"; see the README), endpoint and hosted-region plan limits ("Endpoint limit reached", "Hosted monitoring is not available on your plan"), org role checks, billing outside the org owner, or admin-only routes.
 - `404`: the resource does not exist or the caller cannot see it.
 - `409`: conflict. Duplicate certificate request still in progress, already in an organization, or the organization is dissolving.
 - `429`: rate limited. Wait for the number of seconds in the `Retry-After` response header before retrying. Also returned after too many invalid API key attempts from one IP.

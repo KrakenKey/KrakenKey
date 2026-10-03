@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "name": "krakenkey-api",
   "description": "Tools for interacting with the KrakenKey TLS certificate management and endpoint monitoring API",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "base_url": "https://api.krakenkey.io",
   "auth": {
     "type": "bearer",
@@ -143,25 +143,6 @@
       ]
     },
     {
-      "name": "create_api_key",
-      "description": "Create a new user API key. The key value (kk_...) is returned only once; store it immediately. Returns 402 when the plan's API key limit (pooled across org members) is reached",
-      "method": "POST",
-      "path": "/auth/api-keys",
-      "auth_required": true,
-      "rate_limit_category": "write",
-      "parameters": {
-        "body": {
-          "name": { "type": "string", "max_length": 100, "required": false, "default": "default" },
-          "expiresAt": { "type": "ISO8601", "required": false, "description": "Expiry timestamp. Omit for a key that never expires" }
-        }
-      },
-      "response": {
-        "apiKey": "string (kk_..., shown only once)",
-        "id": "string (UUID)",
-        "name": "string"
-      }
-    },
-    {
       "name": "start_device_login",
       "description": "Start a browser login for a CLI or agent that has no API key (OAuth device flow, RFC 8628). Show the user verificationUriComplete and userCode; they approve in the dashboard (which also works for sign-up). Then poll poll_device_login with deviceCode every interval seconds. Expires after expiresIn seconds",
       "method": "POST",
@@ -199,63 +180,6 @@
         "apiKey": "string (kk_..., only when approved, shown once)",
         "id": "string (UUID, only when approved)",
         "name": "string (only when approved)"
-      }
-    },
-    {
-      "name": "get_device_login",
-      "description": "Show a pending browser login (user code, client name, requesting IP, start time). Used by the dashboard approval page; requires a dashboard session, and API keys get 403",
-      "method": "GET",
-      "path": "/auth/device/{userCode}",
-      "auth_required": true,
-      "rate_limit_category": "write",
-      "parameters": {
-        "path": { "userCode": { "type": "string", "required": true } }
-      },
-      "response": {
-        "userCode": "string",
-        "clientName": "string",
-        "ip": "string",
-        "createdAt": "ISO8601"
-      }
-    },
-    {
-      "name": "approve_device_login",
-      "description": "Approve a pending browser login for the signed-in user. Requires a dashboard session; API keys get 403, so an agent cannot approve its own login. Returns 402 when the plan's API key limit is reached and 404 when the code is unknown or expired",
-      "method": "POST",
-      "path": "/auth/device/approve",
-      "auth_required": true,
-      "rate_limit_category": "write",
-      "parameters": {
-        "body": { "userCode": { "type": "string", "required": true } }
-      },
-      "response": { "name": "string (name the new key will get)" }
-    },
-    {
-      "name": "deny_device_login",
-      "description": "Deny a pending browser login. Requires a dashboard session; API keys get 403",
-      "method": "POST",
-      "path": "/auth/device/deny",
-      "auth_required": true,
-      "rate_limit_category": "write",
-      "parameters": {
-        "body": { "userCode": { "type": "string", "required": true } }
-      },
-      "response": { "message": "string" }
-    },
-    {
-      "name": "delete_api_key",
-      "description": "Delete one of the authenticated user's API keys. Returns 404 if the key does not exist or belongs to someone else",
-      "method": "DELETE",
-      "path": "/auth/api-keys/{id}",
-      "auth_required": true,
-      "rate_limit_category": "write",
-      "parameters": {
-        "path": {
-          "id": { "type": "string", "format": "uuid", "required": true }
-        }
-      },
-      "response": {
-        "message": "string ('API key deleted')"
       }
     },
     {
@@ -965,26 +889,6 @@
       }
     },
     {
-      "name": "create_organization",
-      "description": "Create an organization with the caller as owner. Requires a Team, Business, or Enterprise plan (402 otherwise); the owner's subscription becomes the org subscription. Returns 409 if the caller already belongs to an organization",
-      "method": "POST",
-      "path": "/organizations",
-      "auth_required": true,
-      "rate_limit_category": "write",
-      "parameters": {
-        "body": {
-          "name": { "type": "string", "min_length": 2, "max_length": 80, "required": true }
-        }
-      },
-      "response": {
-        "id": "string (UUID)",
-        "name": "string",
-        "ownerId": "string",
-        "status": "string (active)",
-        "createdAt": "ISO8601"
-      }
-    },
-    {
       "name": "get_organization",
       "description": "Get organization details including the member list",
       "method": "GET",
@@ -1006,116 +910,6 @@
       }
     },
     {
-      "name": "update_organization",
-      "description": "Rename an organization. Caller must be an owner or admin of this organization. Returns 409 while the organization is being dissolved",
-      "method": "PATCH",
-      "path": "/organizations/{id}",
-      "auth_required": true,
-      "rate_limit_category": "write",
-      "parameters": {
-        "path": {
-          "id": { "type": "string", "format": "uuid", "required": true }
-        },
-        "body": {
-          "name": { "type": "string", "min_length": 2, "max_length": 80, "required": true }
-        }
-      },
-      "response": "object (same shape as get_organization)"
-    },
-    {
-      "name": "delete_organization",
-      "description": "Delete (dissolve) an organization. Owner only (403 otherwise). Dissolution runs in the background: the org is marked 'dissolving', members' domains, certificates, and API keys are transferred to the owner, members are detached, billing reverts to the owner personally, and the org is removed. Returns 204 with no body",
-      "method": "DELETE",
-      "path": "/organizations/{id}",
-      "auth_required": true,
-      "rate_limit_category": "write",
-      "parameters": {
-        "path": {
-          "id": { "type": "string", "format": "uuid", "required": true }
-        }
-      }
-    },
-    {
-      "name": "invite_member",
-      "description": "Add an existing KrakenKey user to the organization by email (they must have logged in at least once). Caller must be an owner or admin. Returns 404 if no user has that email, 409 if they are in another org or have an active, uncanceled paid subscription. Returns 201 with no body",
-      "method": "POST",
-      "path": "/organizations/{id}/members",
-      "auth_required": true,
-      "rate_limit_category": "write",
-      "parameters": {
-        "path": {
-          "id": { "type": "string", "format": "uuid", "required": true }
-        },
-        "body": {
-          "email": { "type": "string", "format": "email", "required": true },
-          "role": { "type": "string", "enum": ["admin", "member", "viewer"], "required": false, "default": "member" }
-        }
-      }
-    },
-    {
-      "name": "update_member_role",
-      "description": "Change a member's role. Caller must be an owner or admin. The owner's role cannot be changed here; use transfer_ownership. Returns 200 with no body",
-      "method": "PATCH",
-      "path": "/organizations/{id}/members/{userId}",
-      "auth_required": true,
-      "rate_limit_category": "write",
-      "parameters": {
-        "path": {
-          "id": { "type": "string", "format": "uuid", "required": true },
-          "userId": { "type": "string", "required": true }
-        },
-        "body": {
-          "role": { "type": "string", "enum": ["admin", "member", "viewer"], "required": true }
-        }
-      }
-    },
-    {
-      "name": "remove_member",
-      "description": "Remove a member from the organization. Owners and admins can remove others; any member can remove themselves. The owner cannot be removed (400). Returns 204 with no body",
-      "method": "DELETE",
-      "path": "/organizations/{id}/members/{userId}",
-      "auth_required": true,
-      "rate_limit_category": "write",
-      "parameters": {
-        "path": {
-          "id": { "type": "string", "format": "uuid", "required": true },
-          "userId": { "type": "string", "required": true }
-        }
-      }
-    },
-    {
-      "name": "transfer_ownership",
-      "description": "Make another member the owner. Only the current owner can call this; they become an admin. Returns 404 if no member of this org has that email. Returns 201 with no body",
-      "method": "POST",
-      "path": "/organizations/{id}/transfer-ownership",
-      "auth_required": true,
-      "rate_limit_category": "write",
-      "parameters": {
-        "path": {
-          "id": { "type": "string", "format": "uuid", "required": true }
-        },
-        "body": {
-          "email": { "type": "string", "format": "email", "required": true, "description": "Email of the member who becomes owner" }
-        }
-      }
-    },
-    {
-      "name": "create_checkout_session",
-      "description": "Start a paid subscription. Returns a Stripe Checkout URL for the user to open in a browser. In an organization, only the owner can manage billing (403). Returns 400 if the plan is not available for purchase",
-      "method": "POST",
-      "path": "/billing/checkout",
-      "auth_required": true,
-      "rate_limit_category": "write",
-      "parameters": {
-        "body": {
-          "plan": { "type": "string", "enum": ["starter", "team", "business", "enterprise"], "required": true }
-        }
-      },
-      "response": {
-        "sessionUrl": "string (URL)"
-      }
-    },
-    {
       "name": "get_subscription",
       "description": "Get the current subscription (the org subscription for organization members). Users without a subscription record get a default free/active response",
       "method": "GET",
@@ -1134,20 +928,8 @@
       }
     },
     {
-      "name": "create_billing_portal_session",
-      "description": "Get a Stripe Customer Portal URL for managing payment methods, invoices, and cancellation. Org owner only when in an organization (403). Returns 404 if the user has no subscription record",
-      "method": "POST",
-      "path": "/billing/portal",
-      "auth_required": true,
-      "rate_limit_category": "write",
-      "parameters": {},
-      "response": {
-        "portalUrl": "string (URL)"
-      }
-    },
-    {
       "name": "preview_upgrade",
-      "description": "Preview the immediate charge for upgrading an active paid subscription to a higher plan. The charge is the flat difference between the two plan prices (no day-based proration). Returns 404 with no active paid subscription (use create_checkout_session from free), 400 if the target is not higher than the current plan",
+      "description": "Preview the immediate charge for upgrading an active paid subscription to a higher plan. The charge is the flat difference between the two plan prices (no day-based proration). Returns 404 with no active paid subscription (from free, the user upgrades on the Billing page in the dashboard), 400 if the target is not higher than the current plan",
       "method": "POST",
       "path": "/billing/upgrade/preview",
       "auth_required": true,
@@ -1162,25 +944,6 @@
         "currency": "string",
         "targetPlan": "string",
         "currentPeriodEnd": "ISO8601"
-      }
-    },
-    {
-      "name": "upgrade_plan",
-      "description": "Upgrade an active paid subscription to a higher plan and charge the price difference immediately. Same preconditions and errors as preview_upgrade",
-      "method": "POST",
-      "path": "/billing/upgrade",
-      "auth_required": true,
-      "rate_limit_category": "write",
-      "parameters": {
-        "body": {
-          "plan": { "type": "string", "enum": ["starter", "team", "business", "enterprise"], "required": true }
-        }
-      },
-      "response": {
-        "plan": "string",
-        "status": "string",
-        "currentPeriodEnd": "ISO8601 | null",
-        "cancelAtPeriodEnd": "boolean"
       }
     },
     {
@@ -1216,41 +979,6 @@
         "createdAt": "ISO8601",
         "role": "string | null",
         "organizationId": "string | null"
-      }
-    },
-    {
-      "name": "update_user",
-      "description": "Update fields on a user record. Callers can update their own record; admins can update any (403 otherwise). Prefer update_profile for display name and notification settings",
-      "method": "PATCH",
-      "path": "/users/{id}",
-      "auth_required": true,
-      "rate_limit_category": "write",
-      "parameters": {
-        "path": {
-          "id": { "type": "string", "required": true }
-        },
-        "body": {
-          "username": { "type": "string", "max_length": 100, "required": false },
-          "email": { "type": "string", "format": "email", "required": false }
-        }
-      },
-      "response": "object (database update result, not the updated user)"
-    },
-    {
-      "name": "delete_user",
-      "description": "Permanently delete a user account. Callers can delete their own account; admins can delete any (403 otherwise). Issued certificates are revoked with the CA (reason keyCompromise, best effort), then the user's certificates, domains, and API keys are deleted and their feedback is anonymized. Cannot be undone",
-      "method": "DELETE",
-      "path": "/users/{id}",
-      "auth_required": true,
-      "rate_limit_category": "write",
-      "parameters": {
-        "path": {
-          "id": { "type": "string", "required": true }
-        }
-      },
-      "response": {
-        "deleted": "boolean (true)",
-        "certsRevoked": "number"
       }
     }
   ]

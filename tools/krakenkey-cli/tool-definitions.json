@@ -43,23 +43,6 @@
       "example": "krakenkey auth keys list"
     },
     {
-      "name": "auth_keys_create",
-      "description": "Create a new API key. The key value is shown only once",
-      "command": "auth keys create",
-      "flags": {
-        "--name": { "type": "string", "required": true, "description": "Name for the API key" },
-        "--expires-at": { "type": "string", "required": false, "description": "ISO 8601 expiry date" }
-      },
-      "example": "krakenkey auth keys create --name ci-deploy"
-    },
-    {
-      "name": "auth_keys_delete",
-      "description": "Delete an API key by ID",
-      "command": "auth keys delete",
-      "args": ["id"],
-      "example": "krakenkey auth keys delete <uuid>"
-    },
-    {
       "name": "domain_add",
       "description": "Register a domain and print the DNS records it needs: the ownership TXT (name: the domain itself, value: krakenkey-site-verification=...) and the domain's _acme-challenge CNAME. JSON output adds dnsRecords: [{type, name, value}]. Other names on a certificate (e.g. www) need their own CNAME; domain_check lists and checks them",
       "command": "domain add",

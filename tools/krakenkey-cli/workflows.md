@@ -260,12 +260,9 @@ The CLI does not display scan results. Read them in the dashboard or through the
 
 ```bash
 krakenkey auth keys list
-
-# The kk_... value is shown only once; store it right away
-krakenkey --output json auth keys create --name ci-deploy --expires-at 2027-01-01T00:00:00Z | jq -r '.apiKey'
-
-krakenkey auth keys delete <key-id>
 ```
+
+API keys can't create or delete keys: the API answers `auth keys create` and `auth keys delete` with a 403 unless the caller has a dashboard session, and the CLI only ever has a key. To get a key for another machine or a CI job, ask the user to create it under **API Keys** in the dashboard (app.krakenkey.io/dashboard/api-keys), or run `krakenkey auth login --web` on that machine and have the user approve it. Revoking a key is also done in the dashboard.
 
 ## 10. Account and Billing
 
