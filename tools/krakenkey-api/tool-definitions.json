@@ -287,6 +287,7 @@
           "renewalCount": "number",
           "lastRenewalAttemptAt": "ISO8601 | null",
           "revocationReason": "number | null",
+          "failureReason": "string (why the last attempt failed) | null",
           "revokedAt": "ISO8601 | null",
           "createdAt": "ISO8601",
           "userId": "string"

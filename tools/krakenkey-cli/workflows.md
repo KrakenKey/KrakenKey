@@ -1,6 +1,6 @@
 # KrakenKey CLI Workflows
 
-Common multi-step workflows using the `krakenkey` CLI (v0.4.0). See [README.md](README.md) for global flags, output formats, and exit codes.
+Common multi-step workflows using the `krakenkey` CLI (v0.5.0). See [README.md](README.md) for global flags, output formats, and exit codes.
 
 Global flags (`--output`, `--api-key`, `--api-url`, `--no-color`) go **before** the command.
 
@@ -57,10 +57,11 @@ Each domain needs two DNS records before a certificate can be issued:
 2. A **CNAME** from `_acme-challenge.<domain>` to KrakenKey's ACME zone, so KrakenKey can answer DNS-01 challenges. The target is the domain with dots replaced by dashes, under `acme.krakenkey.io`.
 
 ```bash
-# Register the domain and capture its ID and TXT value
-krakenkey --output json domain add example.com | jq -r '.id, .verificationCode'
+# Register the domain; JSON includes the ID and both records
+krakenkey --output json domain add example.com | jq -r '.id, (.dnsRecords[] | "\(.type) \(.name) \(.value)")'
 # <domain-id>
-# krakenkey-site-verification=<hex>
+# TXT example.com krakenkey-site-verification=<hex>
+# CNAME _acme-challenge.example.com example-com.acme.krakenkey.io
 ```
 
 Create these records at the DNS provider:
@@ -72,12 +73,13 @@ _acme-challenge.example.com.  CNAME  example-com.acme.krakenkey.io.
 
 Every name in the certificate needs its own `_acme-challenge` CNAME. For example, a cert that also covers `www.example.com` needs `_acme-challenge.www.example.com. CNAME www-example-com.acme.krakenkey.io.` A wildcard (`*.example.com`) uses the same `_acme-challenge.example.com` record as its base domain.
 
-The CLI prints only the TXT record; it does not print the CNAME. Check both before continuing:
+`domain add` prints the TXT and the CNAME for the domain itself. Check every name the certificate will cover before continuing; `--wait` re-checks every 30 seconds until all records are in place:
 
 ```bash
-dig +short TXT example.com
-dig +short CNAME _acme-challenge.example.com
+krakenkey --output json domain check example.com www.example.com --resolver 1.1.1.1 --wait
 ```
+
+Each record comes back as `ok`, `missing`, `wrong` (with the current target in `found`), `conflict` (TXT records where the CNAME must go), `unregistered` or `skipped` (no API key, so the TXT isn't checked). The command exits 1 until everything is `ok`.
 
 Then verify ownership:
 
@@ -158,13 +160,13 @@ ACME challenge delegation missing: no CNAME found at _acme-challenge.example.com
 
 A CNAME that points to the wrong target fails with `ACME challenge delegation mismatch: ... points to ..., expected ...` instead.
 
-The CLI itself only reports the status. `cert issue --wait` exits 1 with `certificate issuance failed for example.com`, and `cert show` reports status `failed`.
+The CLI shows the same reason: `cert issue --wait` exits 1 with `certificate issuance failed for example.com: <reason>`, and `cert show` prints a `Reason:` line (`failureReason` in JSON).
 
 To recover:
 
 ```bash
-# 1. Fix the CNAME and confirm it resolves
-dig +short CNAME _acme-challenge.example.com
+# 1. Fix the CNAME and confirm it is in place
+krakenkey domain check example.com --resolver 1.1.1.1
 
 # 2. Retry the same certificate (same CSR and key) and wait
 krakenkey cert retry <cert-id> --wait
