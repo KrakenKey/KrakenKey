@@ -89,7 +89,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: krakenkey
     volumes:
-      - krakenkey_local_db:/var/lib/postgresql/data
+      - krakenkey_local_db:/var/lib/postgresql
     networks:
       - krakenkey-local
     restart: unless-stopped
