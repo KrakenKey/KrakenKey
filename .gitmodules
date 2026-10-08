@@ -21,3 +21,7 @@
 [submodule "examples"]
 	path = examples
 	url = https://github.com/krakenkey/examples.git
+[submodule "terraform-provider"]
+	path = terraform-provider
+	url = https://github.com/krakenkey/terraform-provider-krakenkey.git
+	branch = main
