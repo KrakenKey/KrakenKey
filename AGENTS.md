@@ -22,15 +22,18 @@ This is a monorepo with git submodules:
     shared/         # Shared types and API route constants (@krakenkey/shared)
   cli/              # CLI tool (Go 1.26)
   web/              # Marketing site (Astro 5, static, Cloudflare Pages)
-  infra/            # Infrastructure (Terraform, Docker Compose, scripts)
-  probe/            # TLS endpoint monitoring probe (Go 1.24)
+  probe/            # TLS endpoint monitoring probe (Go 1.26)
   actions/          # Custom GitHub Actions
     cert-action/    # Certificate management GitHub Action
+  terraform-provider/ # Terraform/OpenTofu provider (Go, terraform-plugin-framework)
+  examples/         # Runnable examples: GitHub Actions, Terraform, host renewal (MIT-0)
   tools/            # AI agent skill definitions
     krakenkey-api/  # API tool definitions and workflows
     krakenkey-cli/  # CLI tool definitions and workflows
   .devcontainer/    # Local dev environment (Traefik + TLS + Postgres + Redis)
 ```
+
+Production infrastructure (Terraform for AWS and Cloudflare, Docker Compose, deploy pipelines) lives in a separate private repository, not in this monorepo.
 
 ## Tech Stack
 
@@ -40,11 +43,12 @@ This is a monorepo with git submodules:
 | Frontend | React 19, Vite 7, Tailwind 4, Axios |
 | Database | PostgreSQL 18 |
 | Cache/Queue | Redis 8.6 |
-| Auth | Authentik (OIDC) + API keys (`kk_` prefix) + Service keys (`kk_svc_` prefix) |
+| Auth | Authentik (OIDC) + API keys (`kk_` prefix) + Service keys (`kk_svc_` prefix) + GitHub Actions OIDC exchange |
 | API Docs | Swagger/OpenAPI (available at `/swagger-json`) |
 | Marketing | Astro 5, custom CSS |
 | CLI | Go 1.26, manual flag-based routing |
-| Probe | Go 1.24, TLS scanning, JSON state file |
+| Probe | Go 1.26, TLS scanning, JSON state file |
+| Terraform provider | Go, terraform-plugin-framework; on the Terraform and OpenTofu registries as `krakenkey/krakenkey` |
 | Infra | Terraform (AWS + Cloudflare), Docker Compose |
 | CI/CD | GitHub Actions, GHCR container images |
 
@@ -82,6 +86,9 @@ cd cli && go test ./...
 
 # Probe (Go test)
 cd probe && go test ./... -race
+
+# Terraform provider (Go test)
+cd terraform-provider && go test ./...
 ```
 
 Always run tests after making changes. Tests must pass before work is considered complete.
@@ -120,11 +127,12 @@ OpenAPI spec: `GET /swagger-json` (always available). Swagger UI: `GET /swagger`
 
 ### Authentication
 
-Three methods, all via `Authorization: Bearer <token>`:
+Four methods, all via `Authorization: Bearer <token>`:
 
 1. **JWT** -- obtained through Authentik OAuth flow (`/auth/login` -> callback -> JWT)
-2. **User API Key** -- persistent keys prefixed `kk_`, created in the dashboard or through the browser login (`/auth/device/*`, `krakenkey auth login --web`). Used by CLI and connected probes.
+2. **User API Key** -- persistent keys prefixed `kk_`, created in the dashboard or through the browser login (`/auth/device/*`, `krakenkey auth login --web`). Used by CLI and connected probes. A key can be limited to scopes (for example `certs:read`, `certs:renew`, `account:read`) and to specific domains, certificates and source IPs; keys without limits keep full access.
 3. **Service Key** -- internal keys prefixed `kk_svc_`, for hosted probe infrastructure. Seeded from `KK_PROBE_API_KEY` env var.
+4. **GitHub Actions OIDC** -- a workflow exchanges its OIDC token at `POST /auth/github-oidc` for a short-lived `kk_` key. The token must match a trust policy the user created (repository id, allowed refs, scopes, allowed certificates). cert-action does this when no `api-key` input is set.
 
 The probe endpoints (`/probes/*`) accept either user API keys or service keys (dual auth). All other authenticated endpoints accept JWT or user API keys, except those marked "JWT only": API keys get `403` there (`@SessionOnly()`, enforced in `JwtOrApiKeyGuard`), so a key can't create or delete keys, change or delete the user, write to organizations, or start billing changes. A request made with an API key is never treated as admin. The full list is pinned in `backend/src/auth/decorators/session-only.decorator.spec.ts`.
 
@@ -135,8 +143,10 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | GET | `/` | No | API status and version |
 | GET | `/health` | No | Liveness check |
 | GET | `/health/readiness` | No | Readiness (DB, Redis, Authentik) |
+| GET | `/metrics` | No | Prometheus metrics; blocked at the proxy, scraped internally |
 | GET | `/auth/login` | No | Redirect to Authentik login |
 | GET | `/auth/register` | No | Redirect to Authentik registration |
+| GET | `/auth/logout-url` | No | Authentik end-session URL |
 | GET | `/auth/callback` | No | OAuth callback (returns tokens) |
 | GET | `/auth/profile` | Yes | Current user profile with resource counts |
 | PATCH | `/auth/profile` | Yes | Update profile / notification prefs |
@@ -149,6 +159,10 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | GET | `/auth/device/:userCode` | JWT only | Show a pending browser login (approval page) |
 | POST | `/auth/device/approve` | JWT only | Approve a browser login |
 | POST | `/auth/device/deny` | JWT only | Deny a browser login |
+| POST | `/auth/github-oidc` | OIDC | Exchange a GitHub Actions OIDC token for a short-lived API key |
+| GET | `/auth/github-oidc/trusts` | Yes | List GitHub trust policies |
+| POST | `/auth/github-oidc/trusts` | JWT only | Create a trust policy (pins the repository id) |
+| DELETE | `/auth/github-oidc/trusts/:id` | JWT only | Delete a trust policy |
 | GET | `/domains` | Yes | List domains |
 | POST | `/domains` | Yes | Register domain |
 | GET | `/domains/:id` | Yes | Get domain details |
@@ -181,6 +195,21 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | POST | `/certs/tls/:id/retry` | Yes | Retry failed issuance |
 | POST | `/certs/tls/:id/revoke` | Yes | Revoke certificate |
 | DELETE | `/certs/tls/:id` | Yes | Delete failed/revoked cert |
+| GET | `/notifications/channels` | Yes | List alert channels (Slack, Teams, signed webhook) |
+| POST | `/notifications/channels` | Yes | Create an alert channel |
+| PATCH | `/notifications/channels/:id` | Yes | Update an alert channel |
+| DELETE | `/notifications/channels/:id` | Yes | Delete an alert channel |
+| POST | `/notifications/channels/:id/test` | Yes | Send a test alert |
+| POST | `/notifications/channels/:id/rotate-secret` | Yes | Rotate a webhook signing secret |
+| GET | `/reports` | Yes | List portfolio reports |
+| POST | `/reports` | Yes | Scan a list of hosts into a portfolio report |
+| GET | `/reports/:id` | Yes | Get a report with results |
+| GET | `/reports/:id/export` | Yes | Export a report as CSV |
+| DELETE | `/reports/:id` | Yes | Delete a report |
+| POST | `/reports/:id/share` | Yes | Create a read-only share link (expires after 30 days) |
+| DELETE | `/reports/:id/share` | Yes | Revoke the share link |
+| GET | `/public/reports/:token` | No | View a shared report |
+| GET | `/public/reports/:token/export` | No | Export a shared report as CSV |
 | POST | `/public-scan` | No | On-demand TLS scan; SSRF-protected, per-IP rate-limited |
 | GET | `/users` | Yes | List users (admin only) |
 | GET | `/users/:id` | Yes | Get user (own record or admin) |
@@ -199,9 +228,10 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | POST | `/billing/portal` | JWT only | Create Stripe portal session |
 | POST | `/billing/upgrade/preview` | Yes | Preview upgrade cost |
 | POST | `/billing/upgrade` | JWT only | Upgrade subscription |
+| POST | `/billing/webhook` | No | Stripe webhook (signature verified) |
 | POST | `/feedback` | Yes | Submit feedback |
 
-"Dual" auth means the endpoint accepts either a user API key (`kk_`) or a service key (`kk_svc_`).
+"Dual" auth means the endpoint accepts either a user API key (`kk_`) or a service key (`kk_svc_`). "OIDC" means the bearer token is a GitHub Actions OIDC token, not a KrakenKey credential.
 
 ### Error Format
 
@@ -223,7 +253,7 @@ Plan limit errors return `402` (domains, API keys, certificates) or `403` (monit
 
 ### Rate Limiting
 
-Tier-aware and counted per route. JWT callers are tracked by user ID; API key and unauthenticated callers by client IP, so several API keys behind one NAT share a bucket. Details: [app/docs/RATE_LIMITING.md](https://github.com/KrakenKey/app/blob/main/docs/RATE_LIMITING.md).
+Tier-aware and counted per route. JWT and user API key callers are tracked by user ID, with an API key counted against its owner at the owner's plan tier, so all of a user's keys share one bucket. Service keys, unknown keys, unauthenticated callers and every request to a public route are tracked by client IP. Details: [app/docs/RATE_LIMITING.md](https://github.com/KrakenKey/app/blob/main/docs/RATE_LIMITING.md).
 
 | Tier | Public | Reads | Writes | Expensive |
 |------|--------|-------|--------|-----------|
@@ -267,6 +297,8 @@ issued -> revoking -> revoked (delete possible)
 ```
 
 Issuance is asynchronous via BullMQ. Typical time: 2-5 minutes. Poll `GET /certs/tls/:id` for status.
+
+Renewal timing follows the plan's renewal window (5 days before expiry on Free, 30 days on paid plans). The API also checks ACME Renewal Information (ARI, RFC 9773) hourly: if the CA asks for early replacement, for example ahead of a mass revocation, the certificate is renewed early and the user gets a `cert.replacement_requested` alert. ARI never delays a renewal the plan window would trigger.
 
 ### Certificate Chain
 
@@ -324,7 +356,13 @@ The `krakenkey` CLI (`cli/` directory) provides terminal access to all KrakenKey
 # From source
 cd cli && go build -o krakenkey ./cmd/krakenkey
 
-# Pre-built binaries via GitHub Releases (goreleaser): krakenkey_<version>_<os>_<arch>.tar.gz
+# Homebrew (macOS, Linux)
+brew install krakenkey/tap/krakenkey
+
+# Debian/Ubuntu and Fedora/RHEL: signed apt and dnf repositories at
+# https://packages.krakenkey.io (setup steps in the docs site's CLI install guide)
+
+# Pre-built binaries via GitHub Releases (goreleaser): krakenkey_<version>_<os>_<arch>.tar.gz, .deb, .rpm
 ```
 
 ### Authentication
@@ -395,7 +433,8 @@ Some errors are wrapped before they reach the exit handler (e.g. the submit step
 - **CSR generation**: client-side only (Web Crypto API in browser, Go crypto stdlib in CLI)
 - **Endpoint monitoring**: Go probe binary scans TLS endpoints; NestJS API receives and stores results
 - **Dual auth**: Probe endpoints accept user API keys or service keys via ServiceOrUserKeyGuard
-- **Cron jobs**: domain re-verification (2 AM), probe staleness detection (3 AM), scan result retention cleanup (4 AM), cert expiry monitoring (6 AM), activation reminder emails (10 AM)
+- **Cron jobs**: ARI renewal-info checks (hourly), expired short-lived key purge (hourly at :15), domain re-verification (2 AM), probe staleness detection (3 AM), old report and expired share link cleanup (3:30 AM), scan result retention cleanup (4 AM), revoked key purge (4:30 AM), cert expiry monitoring (6 AM), activation reminder emails (10 AM)
+- **Alerts**: notification events go to email (per-user preferences) and to alert channels (Slack, Teams, HMAC-signed webhooks); outbound URLs pass the shared SSRF check in `common/net/ssrf.ts`
 
 ## Writing Style
 

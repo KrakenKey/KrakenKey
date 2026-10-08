@@ -34,15 +34,19 @@ Private keys never leave your device. CSRs are generated client-side using the W
 - **Endpoint monitoring** -- TLS health checks (expiry, chain validity, cipher suites, protocol versions, OCSP, handshake latency) with scan result export
 - **Self-hosted probe** -- open-source Go binary with standalone, connected, and hosted modes
 - **Auto-renewal** -- daily expiry checks with tier-aware renewal windows and email notifications
-- **Email notifications** -- cert issued/renewed/failed/revoked, expiry warnings, domain verification alerts
+- **Early renewal on CA request** -- ACME Renewal Information (ARI) checks renew a certificate early when the CA asks
+- **Notifications** -- email for cert issued/renewed/failed/revoked, expiry warnings and domain verification, plus alerts to Slack, Teams and signed webhooks
+- **Portfolio reports** -- scan a list of hosts into a TLS report with CSV export and expiring share links
 - **Organizations & RBAC** -- teams with owner, admin, member, viewer roles
 - **Subscription billing** -- Stripe-powered tiers (Free, Starter, Team) with plan limit enforcement
-- **Go CLI** -- full API parity with local CSR generation (`krakenkey cert issue`, `cert renew`, etc.)
-- **GitHub Action** -- cert-action for CI/CD certificate issuance, renewal, and download
+- **Go CLI** -- full API parity with local CSR generation (`krakenkey cert issue`, `cert renew`, etc.); Homebrew, apt and dnf packages
+- **GitHub Action** -- cert-action for CI/CD certificate issuance, renewal, and download; signs in with GitHub Actions OIDC, no stored key needed
+- **Terraform provider** -- `krakenkey/krakenkey` on the Terraform and OpenTofu registries; manage domains, certificates and monitoring as code
+- **Examples** -- runnable GitHub Actions, Terraform and systemd renewal setups in [examples/](examples/)
 - **REST API** -- every dashboard action is available programmatically
 - **Web dashboard** -- visual certificate lifecycle management
 - **Prometheus metrics** -- 12+ gauges and counters for observability
-- **API key authentication** -- persistent keys for CI/CD and automation workflows
+- **API key authentication** -- persistent keys for CI/CD and automation, optionally limited to scopes, domains, certificates and source IPs
 - **Tier-aware rate limiting** -- configurable per-tier throttling on all endpoints
 - **Swagger/OpenAPI docs** -- interactive API documentation
 
