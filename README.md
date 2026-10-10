@@ -42,6 +42,7 @@ Private keys never leave your device. CSRs are generated client-side using the W
 - **Go CLI** -- full API parity with local CSR generation (`krakenkey cert issue`, `cert renew`, etc.); Homebrew, apt and dnf packages
 - **GitHub Action** -- cert-action for CI/CD certificate issuance, renewal, and download; signs in with GitHub Actions OIDC, no stored key needed
 - **Terraform provider** -- `krakenkey/krakenkey` on the Terraform and OpenTofu registries; manage domains, certificates and monitoring as code
+- **Connector** (pre-release) -- runs in your environment, renews certificates with keys that never leave it, and deploys them with verification and rollback
 - **Examples** -- runnable GitHub Actions, Terraform and systemd renewal setups in [examples/](examples/)
 - **REST API** -- every dashboard action is available programmatically
 - **Web dashboard** -- visual certificate lifecycle management

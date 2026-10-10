@@ -25,3 +25,7 @@
 	path = terraform-provider
 	url = https://github.com/krakenkey/terraform-provider-krakenkey.git
 	branch = main
+[submodule "connector"]
+	path = connector
+	url = https://github.com/krakenkey/connector.git
+	branch = main

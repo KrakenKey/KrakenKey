@@ -52,7 +52,7 @@ Limits depend on the user's plan and the route's category (`rate_limit_category`
 | business | 120/min | 600/min | 120/min | 60/hour |
 | enterprise | 120/min | 1000/min | 200/min | 100/hour |
 
-`expensive` routes: certificate issuance, renewal, retry, and revocation, and domain verification. Counters are per route. Requests authenticated with a JWT are counted per user at the user's plan; requests with a `kk_` API key and unauthenticated requests are counted per client IP at the free-plan limits. A `429` response carries a `Retry-After` header in seconds. See `workflows.md` for details.
+`expensive` routes: certificate issuance, renewal, retry, and revocation, and domain verification. Counters are per route. Requests with a JWT or a user `kk_` API key are counted per user at the user's plan (all of a user's keys share one counter); service keys, unauthenticated requests and public routes are counted per client IP at the free-plan limits. A `429` response carries a `Retry-After` header in seconds. See `workflows.md` for details.
 
 ## Coverage
 

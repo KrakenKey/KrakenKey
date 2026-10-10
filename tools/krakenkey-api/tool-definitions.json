@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "name": "krakenkey-api",
   "description": "Tools for interacting with the KrakenKey TLS certificate management and endpoint monitoring API",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "base_url": "https://api.krakenkey.io",
   "auth": {
     "type": "bearer",
@@ -289,6 +289,8 @@
           "expiresAt": "ISO8601 | null",
           "lastRenewedAt": "ISO8601 | null",
           "autoRenew": "boolean",
+          "managedBy": "string ('connector') | null",
+          "renewAfter": "ISO8601 | null (when the certificate will be renewed: expiry minus the plan window, earlier if the CA asked for early replacement; connector-managed certificates use at least 30 days and follow the CA's suggested window)",
           "renewalCount": "number",
           "lastRenewalAttemptAt": "ISO8601 | null",
           "revocationReason": "number | null",
@@ -382,7 +384,7 @@
     },
     {
       "name": "update_certificate",
-      "description": "Toggle automatic renewal for a certificate. Returns the updated certificate",
+      "description": "Change automatic renewal, or mark a certificate as managed by a customer-hosted connector (managedBy: 'connector' stops KrakenKey renewing it itself; null clears it). Returns the updated certificate",
       "method": "PATCH",
       "path": "/certs/tls/{id}",
       "auth_required": true,
@@ -392,14 +394,15 @@
           "id": { "type": "number", "required": true }
         },
         "body": {
-          "autoRenew": { "type": "boolean", "required": false }
+          "autoRenew": { "type": "boolean", "required": false },
+          "managedBy": { "type": "string ('connector') | null", "required": false }
         }
       },
       "response": "object (same shape as a list_certificates item)"
     },
     {
       "name": "renew_certificate",
-      "description": "Renew an issued certificate using its original CSR. Only works when status is 'issued'. Subject to the same plan limits as issuance (402). Async; poll get_certificate until status returns to 'issued'. crtPem and chainPem are cleared while the renewal runs, so save the current certificate first if you still need it",
+      "description": "Renew an issued certificate. Without a body the stored CSR is reused, so the key pair stays the same; send csrPem to renew with a new key (the CSR must carry exactly the certificate's names, otherwise 400). With ifDue=true it only renews when the certificate is due and otherwise returns 200 with skipped: true. Only works when status is 'issued'. Subject to the same plan limits as issuance (402). Async; poll get_certificate until status returns to 'issued'. crtPem and chainPem are cleared while the renewal runs, so save the current certificate first if you still need it",
       "method": "POST",
       "path": "/certs/tls/{id}/renew",
       "auth_required": true,
@@ -407,11 +410,21 @@
       "parameters": {
         "path": {
           "id": { "type": "number", "required": true }
+        },
+        "query": {
+          "ifDue": { "type": "boolean", "required": false }
+        },
+        "body": {
+          "csrPem": { "type": "string (PEM CSR with the certificate's names)", "required": false }
         }
       },
       "response": {
         "id": "number",
-        "status": "string (renewing)"
+        "status": "string (renewing, or issued when skipped)",
+        "skipped": "boolean (ifDue only)",
+        "reason": "string (not_due, when skipped)",
+        "expiresAt": "ISO8601 (when skipped)",
+        "renewalWindowDays": "number (when skipped)"
       }
     },
     {
