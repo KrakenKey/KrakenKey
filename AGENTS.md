@@ -132,12 +132,13 @@ OpenAPI spec: `GET /swagger-json` (always available). Swagger UI: `GET /swagger`
 
 ### Authentication
 
-Four methods, all via `Authorization: Bearer <token>`:
+Five methods, all via `Authorization: Bearer <token>`:
 
 1. **JWT** -- obtained through Authentik OAuth flow (`/auth/login` -> callback -> JWT)
 2. **User API Key** -- persistent keys prefixed `kk_`, created in the dashboard or through the browser login (`/auth/device/*`, `krakenkey auth login --web`). Used by CLI and connected probes. A key can be limited to scopes (for example `certs:read`, `certs:renew`, `account:read`) and to specific domains, certificates and source IPs; keys without limits keep full access.
 3. **Service Key** -- internal keys prefixed `kk_svc_`, for hosted probe infrastructure. Seeded from `KK_PROBE_API_KEY` env var.
 4. **GitHub Actions OIDC** -- a workflow exchanges its OIDC token at `POST /auth/github-oidc` for a short-lived `kk_` key. The token must match a trust policy the user created (repository id, allowed refs, scopes, allowed certificates). cert-action does this when no `api-key` input is set.
+5. **Connector identity** -- a customer-hosted connector enrolls once with a one-time `kkce_` token from the dashboard and an Ed25519 public key (`POST /connectors/enroll`), then signs a timestamped, nonce-protected assertion at `POST /connectors/token` for a one-hour `kk_` key carrying the connector's scopes (`certs:read`, `certs:renew`) and certificate/domain restrictions. Revoking the connector, rotating its key, or editing its restrictions revokes its live keys.
 
 The probe endpoints (`/probes/*`) accept either user API keys or service keys (dual auth). All other authenticated endpoints accept JWT or user API keys, except those marked "JWT only": API keys get `403` there (`@SessionOnly()`, enforced in `JwtOrApiKeyGuard`), so a key can't create or delete keys, change or delete the user, write to organizations, or start billing changes. A request made with an API key is never treated as admin. The full list is pinned in `backend/src/auth/decorators/session-only.decorator.spec.ts`.
 
@@ -191,7 +192,7 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | POST | `/probes/report` | Dual | Submit scan results |
 | GET | `/probes/:probeId/config` | Dual | Fetch endpoint list for probe |
 | GET | `/certs/tls` | Yes | List certificates |
-| POST | `/certs/tls` | Yes | Submit CSR for issuance |
+| POST | `/certs/tls` | Yes | Submit CSR for issuance, or `{ names, managedBy: "connector" }` for a pending certificate a connector issues |
 | GET | `/certs/tls/:id` | Yes | Get certificate details |
 | GET | `/certs/tls/:id/details` | Yes | Get parsed cert details (issued only) |
 | GET | `/certs/tls/:id/chain` | Yes | Get intermediate chain details; `chainPem` and `fullChainPem` |
@@ -235,8 +236,19 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | POST | `/billing/upgrade` | JWT only | Upgrade subscription |
 | POST | `/billing/webhook` | No | Stripe webhook (signature verified) |
 | POST | `/feedback` | Yes | Submit feedback |
+| GET | `/connectors` | Yes | List connectors (with deployment counts) |
+| POST | `/connectors` | JWT only | Create a connector; returns a one-time enrollment token |
+| GET | `/connectors/:id` | Yes | Get a connector and its deployments |
+| PATCH | `/connectors/:id` | JWT only | Rename, or change scopes and restrictions (revokes live keys) |
+| DELETE | `/connectors/:id` | JWT only | Revoke a connector and its live keys |
+| POST | `/connectors/:id/enrollment-token` | JWT only | New enrollment token for a connector that has not enrolled |
+| GET | `/connectors/deployments` | Yes | Deployments for one certificate (`?certificateId=`) |
+| POST | `/connectors/enroll` | Token | Enroll with a one-time token and an Ed25519 public key |
+| POST | `/connectors/token` | Signed | Exchange a signed assertion for a one-hour API key |
+| POST | `/connectors/rotate` | Signed | Rotate the connector's identity key |
+| POST | `/connectors/report` | Connector key | Report per-target deployment state |
 
-"Dual" auth means the endpoint accepts either a user API key (`kk_`) or a service key (`kk_svc_`). "OIDC" means the bearer token is a GitHub Actions OIDC token, not a KrakenKey credential.
+"Dual" auth means the endpoint accepts either a user API key (`kk_`) or a service key (`kk_svc_`). "OIDC" means the bearer token is a GitHub Actions OIDC token, not a KrakenKey credential. "Token" and "Signed" routes take no bearer: they carry an enrollment token or an Ed25519 signature in the body. "Connector key" means a short-lived key issued to a connector.
 
 ### Error Format
 
@@ -270,6 +282,8 @@ Tier-aware and counted per route. JWT and user API key callers are tracked by us
 
 Expensive operations: cert issuance, renewal, retry, revocation, domain verification.
 
+Connector routes have their own limits: `POST /connectors/enroll` and `/connectors/rotate` 10/min per IP, `POST /connectors/token` 60/min per IP, and `POST /connectors/report` 60/hour per connector.
+
 A `429` carries a `Retry-After` header (seconds); back off for at least that long. Allowed responses carry `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset`.
 
 Separately, 10 failed API key attempts from one IP within 15 minutes lock that IP out of API key auth for 15 minutes (also `429`, message `Too many failed API key attempts`). An agent looping on a bad or revoked key will lock itself out; stop on the first `401` instead of retrying.
@@ -296,6 +310,7 @@ Free tier gets connected probes only. Hosted monitoring starts at Starter tier.
 ### Certificate Lifecycle
 
 ```
+awaiting_csr -> pending  (connector sends its CSR via renew)
 pending -> issuing -> issued -> renewing -> issued (renewed)
                   \-> failed  (retry possible)
 issued -> revoking -> revoked (delete possible)
@@ -305,7 +320,7 @@ Issuance is asynchronous via BullMQ. Typical time: 2-5 minutes. Poll `GET /certs
 
 Renewal timing follows the plan's renewal window (5 days before expiry on Free, 30 days on paid plans). The API also checks ACME Renewal Information (ARI, RFC 9773) hourly: if the CA asks for early replacement, for example ahead of a mass revocation, the certificate is renewed early and the user gets a `cert.replacement_requested` alert. ARI never delays a renewal the plan window would trigger.
 
-Every certificate reports `renewAfter`, the time it will be renewed. A certificate marked `managedBy: "connector"` is never renewed by KrakenKey itself: a customer-hosted connector renews it with a new key and CSR once `renewAfter` passes, using a window of at least 30 days that also follows the CA's suggested ARI window.
+Every certificate reports `renewAfter`, the time it will be renewed. A certificate marked `managedBy: "connector"` is never renewed by KrakenKey itself: a customer-hosted connector renews it with a new key and CSR once `renewAfter` passes, using a window of at least 30 days that also follows the CA's suggested ARI window. A pending certificate (`awaiting_csr`, created with `names` and no CSR) is issued by the connector's first `renew` call with its own CSR; the names must match `requestedNames`.
 
 ### Certificate Chain
 
@@ -440,8 +455,8 @@ Some errors are wrapped before they reach the exit handler (e.g. the submit step
 - **CSR generation**: client-side only (Web Crypto API in browser, Go crypto stdlib in CLI)
 - **Endpoint monitoring**: Go probe binary scans TLS endpoints; NestJS API receives and stores results
 - **Dual auth**: Probe endpoints accept user API keys or service keys via ServiceOrUserKeyGuard
-- **Cron jobs**: ARI renewal-info checks (hourly), expired short-lived key purge (hourly at :15), domain re-verification (2 AM), probe staleness detection (3 AM), old report and expired share link cleanup (3:30 AM), scan result retention cleanup (4 AM), revoked key purge (4:30 AM), cert expiry monitoring (6 AM), activation reminder emails (10 AM)
-- **Alerts**: notification events go to email (per-user preferences) and to alert channels (Slack, Teams, HMAC-signed webhooks); outbound URLs pass the shared SSRF check in `common/net/ssrf.ts`
+- **Cron jobs**: ARI renewal-info checks (hourly), expired short-lived key purge (hourly at :15), domain re-verification (2 AM), probe staleness detection (3 AM), old report and expired share link cleanup (3:30 AM), scan result retention cleanup (4 AM), revoked key purge (4:30 AM), cert expiry monitoring (6 AM), activation reminder emails (10 AM), stale connector check (hourly)
+- **Alerts**: notification events (including `deploy.failed` and `connector.stale` from connectors) go to email (per-user preferences) and to alert channels (Slack, Teams, HMAC-signed webhooks); outbound URLs pass the shared SSRF check in `common/net/ssrf.ts`
 
 ## Writing Style
 
@@ -451,7 +466,7 @@ When generating user-facing content: avoid em dashes, "delve", "leverage", "elev
 
 See [tools/](tools/) for structured skill definitions that AI agents can use:
 
-- **[krakenkey-api](tools/krakenkey-api/)** -- Tool definitions and workflows for the KrakenKey REST API, one tool per public route: certificate lifecycle and chain download, domain verification, endpoint monitoring, connected probes, public scan, organizations, users, and billing. OAuth redirects, the Stripe webhook, and `/metrics` are intentionally left out.
+- **[krakenkey-api](tools/krakenkey-api/)** -- Tool definitions and workflows for the KrakenKey REST API, one tool per public route: certificate lifecycle and chain download, domain verification, endpoint monitoring, connected probes, public scan, organizations, users, and billing. OAuth redirects, the Stripe webhook, `/metrics`, and the routes only the connector calls (enroll, token, rotate, report) are intentionally left out.
 - **[krakenkey-cli](tools/krakenkey-cli/)** -- Tool definitions and workflows for the `krakenkey` CLI (v0.6.0). Covers all commands: auth, domain, cert, endpoint, account, and version.
 
 When the API or CLI changes, update the matching `tools/` files in the same release. The definitions are checked against `app` main and the latest `cli` release, so drift shows up as wrong paths or missing flags for agents.

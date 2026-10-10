@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "name": "krakenkey-api",
   "description": "Tools for interacting with the KrakenKey TLS certificate management and endpoint monitoring API",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "base_url": "https://api.krakenkey.io",
   "auth": {
     "type": "bearer",
@@ -285,7 +285,8 @@
           },
           "crtPem": "string (PEM, leaf certificate only) | null",
           "chainPem": "string (PEM, intermediates only) | null",
-          "status": "string (pending | issuing | issued | failed | renewing | revoking | revoked)",
+          "status": "string (awaiting_csr | pending | issuing | issued | failed | renewing | revoking | revoked)",
+          "requestedNames": "string[] | null (names of a certificate created for a connector without a CSR)",
           "expiresAt": "ISO8601 | null",
           "lastRenewedAt": "ISO8601 | null",
           "autoRenew": "boolean",
@@ -302,20 +303,78 @@
       ]
     },
     {
+      "name": "list_connectors",
+      "description": "List the user's customer-hosted connectors with status fields and deployment counts. Creating, editing and revoking connectors needs a dashboard session",
+      "method": "GET",
+      "path": "/connectors",
+      "auth_required": true,
+      "rate_limit_category": "read",
+      "parameters": {},
+      "response": [
+        {
+          "id": "string (UUID)",
+          "name": "string",
+          "clientLabel": "string | null",
+          "scopes": "string[]",
+          "allowedCertIds": "number[] | null",
+          "allowedDomainIds": "string[] | null",
+          "enrolledAt": "ISO8601 | null",
+          "enrollmentTokenExpiresAt": "ISO8601 | null",
+          "revokedAt": "ISO8601 | null",
+          "lastSeenAt": "ISO8601 | null (stale after 24 hours)",
+          "version": "string | null",
+          "os": "string | null",
+          "arch": "string | null",
+          "createdAt": "ISO8601",
+          "deploymentSummary": { "certificates": "number", "targets": "number", "failing": "number" }
+        }
+      ]
+    },
+    {
+      "name": "get_connector",
+      "description": "Get one connector and its deployments (one row per certificate and target label, with state pending | staged | activated | verified | activated_unverifiable | failed | rolled_back)",
+      "method": "GET",
+      "path": "/connectors/{id}",
+      "auth_required": true,
+      "rate_limit_category": "read",
+      "parameters": {
+        "path": {
+          "id": { "type": "string (UUID)", "required": true }
+        }
+      },
+      "response": "object (a list_connectors item plus deployments: [{ connectorId, connectorName, certificateId, label, state, serial, error, updatedAt, reportedAt }])"
+    },
+    {
+      "name": "list_certificate_deployments",
+      "description": "Where a certificate is deployed by the user's connectors (revoked connectors excluded)",
+      "method": "GET",
+      "path": "/connectors/deployments",
+      "auth_required": true,
+      "rate_limit_category": "read",
+      "parameters": {
+        "query": {
+          "certificateId": { "type": "number", "required": true }
+        }
+      },
+      "response": "array (deployment rows as in get_connector)"
+    },
+    {
       "name": "submit_csr",
-      "description": "Submit a PEM-encoded CSR for issuance. Keys must be RSA >= 2048 bits or ECDSA P-256/P-384. Every name in the CSR must be a verified domain or a subdomain of one (wildcards allowed), and each name needs an _acme-challenge CNAME delegated to KrakenKey or issuance fails. Issuance is async; poll get_certificate. Resubmitting the same CSR within 15 minutes returns the original certificate instead of a new one (409 while the original request is still being created). Returns 402 when a certificate plan limit is reached",
+      "description": "Submit a PEM-encoded CSR for issuance, or create a pending certificate for a customer-hosted connector by sending names and managedBy: 'connector' instead of csrPem (exactly one of the two; the connector creates the key and issues it on its next pass through renew_certificate with csrPem). Keys must be RSA >= 2048 bits or ECDSA P-256/P-384. Every name in the CSR must be a verified domain or a subdomain of one (wildcards allowed), and each name needs an _acme-challenge CNAME delegated to KrakenKey or issuance fails. Issuance is async; poll get_certificate. Resubmitting the same CSR within 15 minutes returns the original certificate instead of a new one (409 while the original request is still being created). Returns 402 when a certificate plan limit is reached",
       "method": "POST",
       "path": "/certs/tls",
       "auth_required": true,
       "rate_limit_category": "expensive",
       "parameters": {
         "body": {
-          "csrPem": { "type": "string", "max_length": 10000, "required": true, "description": "PEM-encoded CSR (-----BEGIN CERTIFICATE REQUEST-----...-----END CERTIFICATE REQUEST-----)" }
+          "csrPem": { "type": "string", "max_length": 10000, "required": false, "description": "PEM-encoded CSR (-----BEGIN CERTIFICATE REQUEST-----...-----END CERTIFICATE REQUEST-----). Required unless names is sent" },
+          "names": { "type": "string[] (1-100 DNS names, optional leading *.)", "required": false, "description": "Pending certificate: names the connector will request. Same domain checks as a CSR's names" },
+          "managedBy": { "type": "string ('connector')", "required": false, "description": "Required with names" }
         }
       },
       "response": {
         "id": "number",
-        "status": "string (pending, or the current status on an idempotent replay)"
+        "status": "string (pending, awaiting_csr for a pending certificate, or the current status on an idempotent replay)"
       }
     },
     {
