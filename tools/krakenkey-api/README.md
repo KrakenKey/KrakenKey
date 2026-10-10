@@ -63,6 +63,7 @@ Limits depend on the user's plan and the route's category (`rate_limit_category`
 | Browser login | `start_device_login`, `poll_device_login` |
 | Domains | `list_domains`, `register_domain`, `get_domain`, `verify_domain`, `delete_domain` |
 | Certificates | `list_certificates`, `submit_csr`, `get_certificate`, `get_certificate_details`, `get_certificate_chain`, `update_certificate`, `renew_certificate`, `retry_certificate`, `revoke_certificate`, `delete_certificate` |
+| Connectors | `list_connectors`, `get_connector`, `list_certificate_deployments` |
 | Endpoints | `list_endpoints`, `create_endpoint`, `get_endpoint`, `update_endpoint`, `delete_endpoint`, `request_endpoint_scan`, `list_my_probes`, `assign_probes`, `unassign_probe`, `add_hosted_region`, `remove_hosted_region`, `get_endpoint_results`, `get_endpoint_latest_results`, `export_endpoint_results` |
 | Probes | `register_probe`, `submit_probe_report`, `get_probe_config` |
 | Public scan | `public_scan` |
