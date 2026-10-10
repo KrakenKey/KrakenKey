@@ -26,6 +26,7 @@ This is a monorepo with git submodules:
   actions/          # Custom GitHub Actions
     cert-action/    # Certificate management GitHub Action
   terraform-provider/ # Terraform/OpenTofu provider (Go, terraform-plugin-framework)
+  connector/        # Customer-hosted connector: renews certs with local keys and deploys them (Go, plugins over gRPC)
   examples/         # Runnable examples: GitHub Actions, Terraform, host renewal (MIT-0)
   tools/            # AI agent skill definitions
     krakenkey-api/  # API tool definitions and workflows
@@ -49,6 +50,7 @@ Production infrastructure (Terraform for AWS and Cloudflare, Docker Compose, dep
 | CLI | Go 1.26, manual flag-based routing |
 | Probe | Go 1.26, TLS scanning, JSON state file |
 | Terraform provider | Go, terraform-plugin-framework; on the Terraform and OpenTofu registries as `krakenkey/krakenkey` |
+| Connector | Go, hashicorp/go-plugin (out-of-process plugins over gRPC), Apache-2.0 |
 | Infra | Terraform (AWS + Cloudflare), Docker Compose |
 | CI/CD | GitHub Actions, GHCR container images |
 
@@ -89,6 +91,9 @@ cd probe && go test ./... -race
 
 # Terraform provider (Go test)
 cd terraform-provider && go test ./...
+
+# Connector (Go test)
+cd connector && go test ./... -race
 ```
 
 Always run tests after making changes. Tests must pass before work is considered complete.
@@ -190,8 +195,8 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | GET | `/certs/tls/:id` | Yes | Get certificate details |
 | GET | `/certs/tls/:id/details` | Yes | Get parsed cert details (issued only) |
 | GET | `/certs/tls/:id/chain` | Yes | Get intermediate chain details; `chainPem` and `fullChainPem` |
-| PATCH | `/certs/tls/:id` | Yes | Update cert (e.g., autoRenew toggle) |
-| POST | `/certs/tls/:id/renew` | Yes | Renew certificate |
+| PATCH | `/certs/tls/:id` | Yes | Update cert (`autoRenew`, `managedBy`) |
+| POST | `/certs/tls/:id/renew` | Yes | Renew certificate; optional `csrPem` body rotates the key, `?ifDue=true` skips when not due |
 | POST | `/certs/tls/:id/retry` | Yes | Retry failed issuance |
 | POST | `/certs/tls/:id/revoke` | Yes | Revoke certificate |
 | DELETE | `/certs/tls/:id` | Yes | Delete failed/revoked cert |
@@ -299,6 +304,8 @@ issued -> revoking -> revoked (delete possible)
 Issuance is asynchronous via BullMQ. Typical time: 2-5 minutes. Poll `GET /certs/tls/:id` for status.
 
 Renewal timing follows the plan's renewal window (5 days before expiry on Free, 30 days on paid plans). The API also checks ACME Renewal Information (ARI, RFC 9773) hourly: if the CA asks for early replacement, for example ahead of a mass revocation, the certificate is renewed early and the user gets a `cert.replacement_requested` alert. ARI never delays a renewal the plan window would trigger.
+
+Every certificate reports `renewAfter`, the time it will be renewed. A certificate marked `managedBy: "connector"` is never renewed by KrakenKey itself: a customer-hosted connector renews it with a new key and CSR once `renewAfter` passes, using a window of at least 30 days that also follows the CA's suggested ARI window.
 
 ### Certificate Chain
 

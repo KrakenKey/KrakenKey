@@ -130,7 +130,11 @@ Step 3: Poll until the status is "issued" again (or "failed")
 Step 4: Fetch and deploy the new chain (workflow 3)
 ```
 
-Renewal reuses the original CSR, so the key pair stays the same. It is checked against the same plan limits as issuance (402) and needs the same `_acme-challenge` CNAMEs. To rotate the key, generate a new CSR and submit it as a new certificate.
+Without a body, renewal reuses the stored CSR, so the key pair stays the same. To rotate the key, send a new CSR with exactly the certificate's names: `POST /certs/tls/{id}/renew` with `{ "csrPem": "..." }` (a different set of names returns `400`). Either way it is checked against the same plan limits as issuance (402) and needs the same `_acme-challenge` CNAMEs.
+
+`?ifDue=true` renews only when the certificate is due and otherwise returns `200` with `{ "skipped": true, "reason": "not_due", ... }`, which makes it safe to call from a scheduled job. Every certificate reports `renewAfter`, the time it will be renewed: expiry minus the plan window, moved earlier if the CA asked for early replacement (ARI).
+
+Certificates renewed by a customer-hosted connector are marked `PATCH /certs/tls/{id}` with `{ "managedBy": "connector" }`. KrakenKey then never renews them itself; the connector renews them with its own keys once `renewAfter` passes. For these certificates `renewAfter` uses a window of at least 30 days and follows the CA's suggested renewal window.
 
 To turn auto-renewal off: `PATCH /certs/tls/{id}` with `{ "autoRenew": false }`.
 
@@ -393,8 +397,8 @@ How it is applied:
 
 - Each route has its own counter. Five certificate requests per hour on free does not use up the five renewals or five domain verifications.
 - Requests with a JWT are counted per user at the user's plan.
-- Requests with a `kk_` API key are counted per client IP at the free-plan limits, whatever the user's plan. Several keys behind the same IP share a counter.
-- Unauthenticated requests are counted per client IP at the free-plan limits.
+- Requests with a user `kk_` API key are counted against the key's owner at the owner's plan, so all of a user's keys share one counter.
+- Service keys, unknown keys, unauthenticated requests and every request to a public route are counted per client IP at the free-plan limits.
 - Windows are fixed. Exceeding a limit blocks that route for one full window (one minute, or one hour for `expensive`).
 - Successful responses include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset`. A `429` includes `Retry-After` in seconds.
 
