@@ -50,7 +50,7 @@ Production infrastructure (Terraform for AWS and Cloudflare, Docker Compose, dep
 | CLI | Go 1.26, manual flag-based routing |
 | Probe | Go 1.26, TLS scanning, JSON state file |
 | Terraform provider | Go, terraform-plugin-framework; on the Terraform and OpenTofu registries as `krakenkey/krakenkey` |
-| Connector | Go, hashicorp/go-plugin (out-of-process plugins over gRPC), Apache-2.0 |
+| Connector | Go, hashicorp/go-plugin (out-of-process plugins over gRPC), Apache-2.0; released as signed archives and `ghcr.io/krakenkey/connector` with the aws-acm, azure-keyvault and azure-appgateway plugins built in |
 | Infra | Terraform (AWS + Cloudflare), Docker Compose |
 | CI/CD | GitHub Actions, GHCR container images |
 
