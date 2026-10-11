@@ -247,6 +247,8 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | POST | `/connectors/token` | Signed | Exchange a signed assertion for a one-hour API key |
 | POST | `/connectors/rotate` | Signed | Rotate the connector's identity key |
 | POST | `/connectors/report` | Connector key | Report per-target deployment state |
+| PUT | `/connectors/config` | Connector key | Share a read-only summary of the connector's config (allowlisted settings only) |
+| DELETE | `/connectors/config` | Connector key | Delete the shared config summary |
 
 "Dual" auth means the endpoint accepts either a user API key (`kk_`) or a service key (`kk_svc_`). "OIDC" means the bearer token is a GitHub Actions OIDC token, not a KrakenKey credential. "Token" and "Signed" routes take no bearer: they carry an enrollment token or an Ed25519 signature in the body. "Connector key" means a short-lived key issued to a connector.
 
@@ -282,7 +284,7 @@ Tier-aware and counted per route. JWT and user API key callers are tracked by us
 
 Expensive operations: cert issuance, renewal, retry, revocation, domain verification.
 
-Connector routes have their own limits: `POST /connectors/enroll` and `/connectors/rotate` 10/min per IP, `POST /connectors/token` 60/min per IP, and `POST /connectors/report` 60/hour per connector.
+Connector routes have their own limits: `POST /connectors/enroll` and `/connectors/rotate` 10/min per IP, `POST /connectors/token` 60/min per IP, `POST /connectors/report` 60/hour per connector, and `PUT /connectors/config` a separate 60/hour per connector.
 
 A `429` carries a `Retry-After` header (seconds); back off for at least that long. Allowed responses carry `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset`.
 
