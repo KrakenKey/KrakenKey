@@ -332,7 +332,7 @@
     },
     {
       "name": "get_connector",
-      "description": "Get one connector and its deployments (one row per certificate and target label, with state pending | staged | activated | verified | activated_unverifiable | failed | rolled_back)",
+      "description": "Get one connector, its deployments (one row per certificate and target label, with state pending | staged | activated | verified | activated_unverifiable | failed | rolled_back), and the read-only config summary the connector shares (null until a connector from v0.3.0 sends one, or when it has share_config off). The summary lists the certificates in the connector's config with their key store and targets, plugin versions, and an allowlist of non-secret settings; it never contains commands, file owners, tags or credentials, and nothing in KrakenKey can change a connector's config",
       "method": "GET",
       "path": "/connectors/{id}",
       "auth_required": true,
@@ -342,7 +342,7 @@
           "id": { "type": "string (UUID)", "required": true }
         }
       },
-      "response": "object (a list_connectors item plus deployments: [{ connectorId, connectorName, certificateId, label, state, serial, error, updatedAt, reportedAt }])"
+      "response": "object (a list_connectors item plus deployments: [{ connectorId, connectorName, certificateId, label, state, serial, error, updatedAt, reportedAt }], configSummary: { hash, version, checkIntervalSeconds, plugins: [{ name, version, source }], certificates: [{ certificateId, names, keyStore: { plugin, keyType, settings }, targets: [{ label, plugin, implicit, runsCommand, verify: { host, port, skipChainValidation } | null, settings }] }], truncated } | null, configHash: string | null, configReportedAt: string | null)"
     },
     {
       "name": "list_certificate_deployments",
