@@ -507,7 +507,7 @@
     },
     {
       "name": "revoke_certificate",
-      "description": "Revoke an issued certificate with the CA. Only works when status is 'issued' and only on certificates the caller created (not other org members'). Synchronous: returns status 'revoked' on success; on a CA error returns 500 and the status goes back to 'issued'. A certificate whose renewal is still waiting (status renewing, renewalQueuedAt set) can be revoked too; the waiting renewal is dropped. 409 if the certificate changed state meanwhile (for example the waiting renewal started)",
+      "description": "Revoke an issued certificate with the CA. Works when status is 'issued', and only on certificates the caller created (not other org members'). Synchronous: returns status 'revoked' on success; on a CA error returns 500 and the status goes back to 'issued'. A certificate whose renewal is still waiting (status renewing, renewalQueuedAt set) can be revoked too; the waiting renewal is dropped. 409 if the certificate changed state meanwhile (for example the waiting renewal started)",
       "method": "POST",
       "path": "/certs/tls/{id}/revoke",
       "auth_required": true,
