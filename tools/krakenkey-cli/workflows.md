@@ -198,7 +198,7 @@ krakenkey cert download 42 --format fullchain --out ./example.com.fullchain.crt
 
 Renewal reuses the stored CSR, so the existing private key keeps working.
 
-When the account's concurrent pending slots are full (for example many certificates renewing at once), the renewal is accepted and waits its turn, starting on its own as earlier requests finish; the status is `renewing` the whole time. `--wait` keeps polling, so for a large batch raise `--poll-timeout` rather than running `renew` again.
+When the account's concurrent pending slots are full (for example many certificates renewing at once), the renewal is accepted and waits its turn, starting on its own as earlier requests finish; the status is `renewing` the whole time. `--wait` keeps polling, so for a large batch raise `--poll-timeout` rather than running `renew` again. While a renewal is running or waiting, `cert renew` without `--if-due` fails with the API's `409` (exit 1); with `--if-due` the API answers `200` with `"skipped": true, "reason": "in_progress"` and the CLI treats it as a skip and exits 0 (its message currently says the certificate is not due).
 
 ## 7. Certificate Management
 
