@@ -44,15 +44,15 @@ The live OpenAPI document is always served at `GET /swagger-json` (for example `
 
 Limits depend on the user's plan and the route's category (`rate_limit_category` on each tool).
 
-| Plan | public | read | write | expensive |
-|------|--------|------|-------|-----------|
-| free | 30/min | 60/min | 20/min | 5/hour |
-| starter | 60/min | 120/min | 40/min | 10/hour |
-| team | 60/min | 300/min | 60/min | 30/hour |
-| business | 120/min | 600/min | 120/min | 60/hour |
-| enterprise | 120/min | 1000/min | 200/min | 100/hour |
+| Plan | public | read | write | expensive | renewal |
+|------|--------|------|-------|-----------|---------|
+| free | 30/min | 60/min | 20/min | 5/hour | 10/hour |
+| starter | 60/min | 120/min | 40/min | 10/hour | 30/hour |
+| team | 60/min | 300/min | 60/min | 30/hour | 120/hour |
+| business | 120/min | 600/min | 120/min | 60/hour | 300/hour |
+| enterprise | 120/min | 1000/min | 200/min | 100/hour | 600/hour |
 
-`expensive` routes: certificate issuance, renewal, retry, and revocation, and domain verification. Counters are per route. Requests with a JWT or a user `kk_` API key are counted per user at the user's plan (all of a user's keys share one counter); service keys, unauthenticated requests and public routes are counted per client IP at the free-plan limits. A `429` response carries a `Retry-After` header in seconds. See `workflows.md` for details.
+`expensive` routes: certificate issuance, retry, and revocation, and domain verification. `renewal`: certificate renewal (`renew_certificate`), including `ifDue=true` calls that renew nothing. Counters are per route. Requests with a JWT or a user `kk_` API key are counted per user at the user's plan (all of a user's keys share one counter); service keys, unauthenticated requests and public routes are counted per client IP at the free-plan limits. A `429` response carries a `Retry-After` header in seconds. See `workflows.md` for details.
 
 ## Coverage
 
