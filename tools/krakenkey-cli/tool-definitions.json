@@ -247,7 +247,7 @@
     },
     {
       "name": "cert_renew",
-      "description": "Trigger renewal of a certificate. Renewal reuses the stored CSR, so the existing private key stays valid. Does not write files; run cert download afterward. With --wait, a failed certificate exits 1 and the error ends with the API's failure reason. A renewal that fails while the current certificate is still valid leaves it issued with renewalFailedAt and failureReason set; CLI releases with KrakenKey/cli#65 exit 1 for that too ('renewal failed for certificate <id>: <reason>; the current certificate is still in place'), older ones exit 0",
+      "description": "Trigger renewal of a certificate. Renewal reuses the stored CSR, so the existing private key stays valid. Does not write files; run cert download afterward. With --wait, a failed certificate exits 1 and the error ends with the API's failure reason. A renewal that fails while the current certificate is still valid leaves it issued with renewalFailedAt and failureReason set; CLI v0.8.2 and later exit 1 for that too ('renewal failed for certificate <id>: <reason>; the current certificate is still in place'), older ones exit 0",
       "command": "cert renew",
       "args": ["id"],
       "flags": {
@@ -269,7 +269,7 @@
     },
     {
       "name": "cert_retry",
-      "description": "Retry a failed issuance with the same CSR, for example after fixing a missing _acme-challenge CNAME. On an issued certificate whose last renewal failed (renewalFailedAt set), retry renews it again. Does not write files; run cert download afterward. With --wait, a failed certificate exits 1 and the error ends with the API's failure reason; with CLI releases from KrakenKey/cli#65 on, so does a renewal that failed again while the certificate stayed issued",
+      "description": "Retry a failed issuance with the same CSR, for example after fixing a missing _acme-challenge CNAME. On an issued certificate whose last renewal failed (renewalFailedAt set), retry renews it again. Does not write files; run cert download afterward. With --wait, a failed certificate exits 1 and the error ends with the API's failure reason; with CLI v0.8.2 and later, so does a renewal that failed again while the certificate stayed issued",
       "command": "cert retry",
       "args": ["id"],
       "flags": {
