@@ -198,7 +198,7 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | GET | `/certs/tls/:id/chain` | Yes | Get intermediate chain details; `chainPem` and `fullChainPem` |
 | PATCH | `/certs/tls/:id` | Yes | Update cert (`autoRenew`, `managedBy`) |
 | POST | `/certs/tls/:id/renew` | Yes | Renew certificate; optional `csrPem` body rotates the key, `?ifDue=true` skips when not due; `202` when it waits for a free pending slot |
-| POST | `/certs/tls/:id/retry` | Yes | Retry failed issuance |
+| POST | `/certs/tls/:id/retry` | Yes | Retry failed issuance, or renew again after a failed renewal |
 | POST | `/certs/tls/:id/revoke` | Yes | Revoke certificate |
 | DELETE | `/certs/tls/:id` | Yes | Delete failed/revoked cert |
 | GET | `/notifications/channels` | Yes | List alert channels (Slack, Teams, signed webhook) |
@@ -313,14 +313,16 @@ Free tier gets connected probes only. Hosted monitoring starts at Starter tier.
 
 ```
 awaiting_csr -> pending  (connector sends its CSR via renew)
-pending -> issuing -> issued -> renewing -> issued (renewed)
+pending -> issuing -> issued -> renewing -> issued (renewed, or renewal failed: same cert, renewalFailedAt set)
                   \-> failed  (retry possible)
 issued -> revoking -> revoked (delete possible)
 ```
 
 Issuance is asynchronous via BullMQ. Typical time: 2-5 minutes. Poll `GET /certs/tls/:id` for status.
 
-Renewals replace a certificate, so they don't count toward the monthly or total active limits and are never refused for a plan limit. A started renewal takes one of the account's concurrent pending slots, shared with new requests. When they are all in use, the renewal waits: `POST /certs/tls/:id/renew` returns `202` with `"queued": true`, the status is `renewing` and `renewalQueuedAt` is set. It starts on its own, oldest first, as earlier requests finish, and nothing is sent to the CA until then. Keep polling `GET /certs/tls/:id`; don't call renew again: while a renewal runs or waits, renew returns `409`, or `200` with `"skipped": true, "reason": "in_progress"` under `?ifDue=true` (nothing changes; `krakenkey cert renew --if-due` treats it as a skip and exits 0). A certificate whose renewal is still waiting can be revoked (the waiting renewal is dropped). A request whose job is lost is recovered after 30 minutes: a renewal goes back to `issued` (or back into the queue, at most until it has been recovered three times, then `failed`), a new certificate to `failed` with a reason and the usual failure email, so retry works.
+Renewals replace a certificate, so they don't count toward the monthly or total active limits and are never refused for a plan limit. A started renewal takes one of the account's concurrent pending slots, shared with new requests. When they are all in use, the renewal waits: `POST /certs/tls/:id/renew` returns `202` with `"queued": true`, the status is `renewing` and `renewalQueuedAt` is set. It starts on its own, oldest first, as earlier requests finish, and nothing is sent to the CA until then. Keep polling `GET /certs/tls/:id`; don't call renew again: while a renewal runs or waits, renew returns `409`, or `200` with `"skipped": true, "reason": "in_progress"` under `?ifDue=true` (nothing changes; `krakenkey cert renew --if-due` treats it as a skip and exits 0). A certificate whose renewal is still waiting can be revoked (the waiting renewal is dropped). A request whose job is lost is recovered after 30 minutes: a renewal goes back into the queue (at most twice; the third time it loses its job it is recorded as a failed renewal), a new certificate to `failed` with a reason and the usual failure email, so retry works.
+
+A renewal never removes the current certificate: `crtPem`, `chainPem` and `expiresAt` stay readable while it runs and are only replaced on success. If it fails while the current certificate is still valid, the status goes back to `issued` with the same PEM, `renewalFailedAt` set and the error in `failureReason`; if the renewal used a new CSR, the CSR of the kept certificate is put back. Downloads, expiry alerts and ARI checks keep working, and the next automatic attempt is not before 20 hours after the failure, or a quarter of the time left until expiry (or the end of a CA early-replacement window) when that is sooner, but at least 2 hours after it; an hourly job renews it again then if it is due (`renewAfter` shows that time, and `?ifDue=true` skips as `not_due` with `retryAfter` until then). Requesting a renewal, or revoking, clears both fields, so after renewing, treat `issued` with `renewalFailedAt` set (and an unchanged `crtPem`) as a failed renewal, not a success. `POST /certs/tls/:id/retry` on such a certificate renews it again (`certs:renew` for a scoped key). Only a renewal whose certificate had already expired ends `failed`.
 
 Renewal timing follows the plan's renewal window (5 days before expiry on Free, 30 days on paid plans). The API also checks ACME Renewal Information (ARI, RFC 9773) hourly: if the CA asks for early replacement, for example ahead of a mass revocation, the certificate is renewed early and the user gets a `cert.replacement_requested` alert. ARI never delays a renewal the plan window would trigger.
 
@@ -459,7 +461,7 @@ Some errors are wrapped before they reach the exit handler (e.g. the submit step
 - **CSR generation**: client-side only (Web Crypto API in browser, Go crypto stdlib in CLI)
 - **Endpoint monitoring**: Go probe binary scans TLS endpoints; NestJS API receives and stores results
 - **Dual auth**: Probe endpoints accept user API keys or service keys via ServiceOrUserKeyGuard
-- **Cron jobs**: ARI renewal-info checks (hourly), expired short-lived key purge (hourly at :15), domain re-verification (2 AM), probe staleness detection (3 AM), old report and expired share link cleanup (3:30 AM), scan result retention cleanup (4 AM), revoked key purge (4:30 AM), cert expiry monitoring (6 AM), activation reminder emails (10 AM), stale connector check (hourly)
+- **Cron jobs**: ARI renewal-info checks (hourly), expired short-lived key purge (hourly at :15), domain re-verification (2 AM), probe staleness detection (3 AM), old report and expired share link cleanup (3:30 AM), scan result retention cleanup (4 AM), revoked key purge (4:30 AM), cert expiry monitoring (6 AM), failed renewal retries (hourly), activation reminder emails (10 AM), stale connector check (hourly)
 - **Alerts**: notification events (including `deploy.failed` and `connector.stale` from connectors) go to email (per-user preferences) and to alert channels (Slack, Teams, HMAC-signed webhooks); outbound URLs pass the shared SSRF check in `common/net/ssrf.ts`
 
 ## Writing Style

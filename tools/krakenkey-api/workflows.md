@@ -107,7 +107,7 @@ Step 2: Write the files the server expects
   privkey.pem    <- the key generated in workflow 2, step 1 (never from the API)
 ```
 
-`/chain` and `/details` return `400` when the certificate has no PEM, which is the case before issuance, while a renewal is running, and after a failure.
+`/chain` and `/details` return `400` when the certificate has no PEM, which is the case before issuance, after a failed issuance, and after a renewal that failed once the certificate had already expired. A renewal keeps the current certificate readable while it runs, and after it fails as long as the certificate is still valid.
 
 ## 4. Renew a Certificate
 
@@ -116,9 +116,10 @@ Certificates with `autoRenew: true` (the default) renew automatically. A daily j
 Manual renewal:
 
 ```
-Step 1: Save the current certificate if it is still in use
-  GET /certs/tls/{id}/chain
-  crtPem and chainPem are cleared once the renewal starts, and stay empty if it fails.
+Step 1: Note the current certificate
+  GET /certs/tls/{id}
+  Keep crtPem to compare later. It stays readable while the renewal runs,
+  and stays in place if the renewal fails.
 
 Step 2: Trigger renewal (status must be "issued", otherwise 400)
   POST /certs/tls/{id}/renew
@@ -127,13 +128,20 @@ Step 2: Trigger renewal (status must be "issued", otherwise 400)
   slots are full; it starts on its own as earlier requests finish. Don't call
   renew again; just poll.
 
-Step 3: Poll until the status is "issued" again (or "failed")
+Step 3: Poll until the status is no longer "renewing"
   GET /certs/tls/{id}
+  issued, new crtPem                  -> renewed
+  issued, renewalFailedAt set         -> renewal failed; the old certificate
+                                         is still in place, failureReason says why
+  failed                              -> renewal failed and the old
+                                         certificate had already expired
 
 Step 4: Fetch and deploy the new chain (workflow 3)
 ```
 
-Without a body, renewal reuses the stored CSR, so the key pair stays the same. To rotate the key, send a new CSR with exactly the certificate's names: `POST /certs/tls/{id}/renew` with `{ "csrPem": "..." }` (a different set of names returns `400`). Either way it needs the same `_acme-challenge` CNAMEs as issuance. A renewal is never refused for a plan limit: it doesn't count toward the monthly or issued certificate limits, and past the concurrent pending limit it waits (`202`, `renewalQueuedAt` set on the certificate) instead of failing. While a renewal runs or waits, renew returns `409`; with `?ifDue=true` it returns `200` with `{ "skipped": true, "reason": "in_progress", "queued": ... }` instead, so a scheduled job doesn't fail (`krakenkey cert renew --if-due` exits 0 on it). A certificate whose renewal is still waiting can be revoked; the waiting renewal is dropped. If a request's job is lost, it is recovered after 30 minutes: a renewal goes back to `issued` (or back into the queue), a new certificate to `failed` with a `failureReason`, so retry works.
+Without a body, renewal reuses the stored CSR, so the key pair stays the same. To rotate the key, send a new CSR with exactly the certificate's names: `POST /certs/tls/{id}/renew` with `{ "csrPem": "..." }` (a different set of names returns `400`). Either way it needs the same `_acme-challenge` CNAMEs as issuance. A renewal is never refused for a plan limit: it doesn't count toward the monthly or issued certificate limits, and past the concurrent pending limit it waits (`202`, `renewalQueuedAt` set on the certificate) instead of failing. While a renewal runs or waits, renew returns `409`; with `?ifDue=true` it returns `200` with `{ "skipped": true, "reason": "in_progress", "queued": ... }` instead, so a scheduled job doesn't fail (`krakenkey cert renew --if-due` exits 0 on it). A certificate whose renewal is still waiting can be revoked; the waiting renewal is dropped. If a request's job is lost, it is recovered after 30 minutes: a renewal goes back into the queue (at most twice; the third time it loses its job it is recorded as a failed renewal), a new certificate to `failed` with a `failureReason`, so retry works.
+
+When a renewal fails while the current certificate is still valid, the certificate stays `issued` with its PEM, chain and expiry, `renewalFailedAt` is set and `failureReason` says why; if the renewal used a new CSR, the CSR of the kept certificate is put back, so send the new CSR again when you retry (the owner gets a "renewal failed" email and a `cert.failed` alert with `renewal: true`). Downloads, expiry alerts and ARI checks keep working. Fix the cause (usually the `_acme-challenge` CNAME or a CAA record), then call `POST /certs/tls/{id}/renew` or `POST /certs/tls/{id}/retry`; both renew right away and clear the failure. Automatic renewal tries again on its own once the certificate is due: the next automatic attempt is not before 20 hours after the failure, or a quarter of the time left until expiry (or the end of a CA early-replacement window) when that is sooner, but at least 2 hours after it. `renewAfter` shows that time, and `?ifDue=true` returns `200` `{ "skipped": true, "reason": "not_due", "retryAfter": ... }` until then. A renewal that fails after the certificate expired ends `failed` with no PEM, like a failed issuance.
 
 `?ifDue=true` renews only when the certificate is due and otherwise returns `200` with `{ "skipped": true, "reason": "not_due", ... }`, which makes it safe to call from a scheduled job. Every certificate reports `renewAfter`, the time it will be renewed: expiry minus the plan window, moved earlier if the CA asked for early replacement (ARI).
 

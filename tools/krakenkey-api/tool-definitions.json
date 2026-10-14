@@ -291,12 +291,13 @@
           "lastRenewedAt": "ISO8601 | null",
           "autoRenew": "boolean",
           "managedBy": "string ('connector') | null",
-          "renewAfter": "ISO8601 | null (when the certificate will be renewed: expiry minus the plan window, earlier if the CA asked for early replacement; connector-managed certificates use at least 30 days and follow the CA's suggested window)",
+          "renewAfter": "ISO8601 | null (when the certificate will be renewed: expiry minus the plan window, earlier if the CA asked for early replacement; connector-managed certificates use at least 30 days and follow the CA's suggested window; after a failed renewal, never earlier than the next automatic attempt: 20 hours after the failure, or a quarter of the time left until expiry when sooner, at least 2 hours)",
           "renewalCount": "number",
           "lastRenewalAttemptAt": "ISO8601 | null",
           "renewalQueuedAt": "ISO8601 | null (set while a renewal waits for a free concurrent pending slot; status is renewing)",
           "revocationReason": "number | null",
           "failureReason": "string (why the last attempt failed) | null",
+          "renewalFailedAt": "ISO8601 | null (the last renewal failed but the certificate is still issued, with its PEM; failureReason says why. Cleared when a renewal is requested again or the certificate is revoked. Ignore it when older than lastRenewedAt)",
           "revokedAt": "ISO8601 | null",
           "createdAt": "ISO8601",
           "userId": "string"
@@ -462,7 +463,7 @@
     },
     {
       "name": "renew_certificate",
-      "description": "Renew an issued certificate. Without a body the stored CSR is reused, so the key pair stays the same; send csrPem to renew with a new key (the CSR must carry exactly the certificate's names, otherwise 400). With ifDue=true it only renews when the certificate is due and otherwise returns 200 with skipped: true. Only works when status is 'issued'. Never refused for a plan limit: 201 with queued: false when it starts, 202 with queued: true when the account's concurrent pending slots are full (status renewing, renewalQueuedAt set; it starts on its own as earlier requests finish, so don't call renew again). 409 if the certificate is already renewing (running or waiting) or another renew request won the race; with ifDue=true an already renewing certificate returns 200 with skipped: true and reason 'in_progress' instead. Completing an awaiting_csr certificate is a new certificate and can still get 402. Async; poll get_certificate until status returns to 'issued'. crtPem and chainPem are cleared once the renewal starts, so save the current certificate first if you still need it",
+      "description": "Renew an issued certificate. Without a body the stored CSR is reused, so the key pair stays the same; send csrPem to renew with a new key (the CSR must carry exactly the certificate's names, otherwise 400). With ifDue=true it only renews when the certificate is due and otherwise returns 200 with skipped: true. Only works when status is 'issued'. Never refused for a plan limit: 201 with queued: false when it starts, 202 with queued: true when the account's concurrent pending slots are full (status renewing, renewalQueuedAt set; it starts on its own as earlier requests finish, so don't call renew again). 409 if the certificate is already renewing (running or waiting) or another renew request won the race; with ifDue=true an already renewing certificate returns 200 with skipped: true and reason 'in_progress' instead. Completing an awaiting_csr certificate is a new certificate and can still get 402. Async; poll get_certificate until status leaves 'renewing'. The current crtPem and chainPem stay readable throughout. 'issued' with a new crtPem means renewed; 'issued' with renewalFailedAt set means the renewal failed and the current certificate was kept (failureReason says why); 'failed' means it failed after the certificate had expired. After a failed renewal, ifDue=true skips as not_due with retryAfter until the next automatic attempt (at most 20 hours after the failure, sooner close to expiry, at least 2 hours). A failed renewal with a new csrPem puts the previous CSR back, so send the new CSR again to retry with that key",
       "method": "POST",
       "path": "/certs/tls/{id}/renew",
       "auth_required": true,
@@ -485,12 +486,13 @@
         "queued": "boolean (when not skipped: true if waiting for a free concurrent pending slot, HTTP 202)",
         "reason": "string (when skipped: not_due, or in_progress when a renewal is already running or waiting)",
         "expiresAt": "ISO8601 (when skipped)",
-        "renewalWindowDays": "number (when skipped)"
+        "renewalWindowDays": "number (when skipped)",
+        "retryAfter": "ISO8601 (when skipped because the last renewal failed recently: when ifDue renews again)"
       }
     },
     {
       "name": "retry_certificate",
-      "description": "Re-queue issuance of a failed certificate using its original CSR. Only works when status is 'failed'. Subject to the same plan limits as issuance (402). Fix the cause first (for example a missing _acme-challenge CNAME), since permanent failures repeat",
+      "description": "Re-queue issuance of a failed certificate using its original CSR (status 'failed'; same plan limits as issuance, 402; a scoped key needs certs:issue). On an issued certificate whose last renewal failed (renewalFailedAt set), renews it again like renew_certificate instead (status renewing, no plan limits, 202 with queued: true when waiting for a slot; a scoped key needs certs:renew). 400 otherwise. Fix the cause first (for example a missing _acme-challenge CNAME), since permanent failures repeat",
       "method": "POST",
       "path": "/certs/tls/{id}/retry",
       "auth_required": true,
@@ -502,7 +504,8 @@
       },
       "response": {
         "id": "number",
-        "status": "string (pending)"
+        "status": "string (pending, or renewing when a failed renewal is retried)",
+        "queued": "boolean (renewal retry only: true when waiting for a free concurrent pending slot, HTTP 202)"
       }
     },
     {
