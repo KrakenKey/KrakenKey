@@ -200,6 +200,8 @@ Renewal reuses the stored CSR, so the existing private key keeps working.
 
 When the account's concurrent pending slots are full (for example many certificates renewing at once), the renewal is accepted and waits its turn, starting on its own as earlier requests finish; the status is `renewing` the whole time. `--wait` keeps polling, so for a large batch raise `--poll-timeout` rather than running `renew` again. While a renewal is running or waiting, `cert renew` without `--if-due` fails with the API's `409` (exit 1); with `--if-due` the API answers `200` with `"skipped": true, "reason": "in_progress"` and the CLI treats it as a skip and exits 0 (its message currently says the certificate is not due).
 
+A renewal that fails while the certificate is still valid keeps the current certificate: the status goes back to `issued` with `renewalFailedAt` set and the error in `failureReason`, and the files you already have keep working. Current CLI releases treat that `issued` as done, so `cert renew --wait` can exit 0 and save the current certificate again after a failed renewal. After `--wait`, check `krakenkey --output json cert show 42`: a set `renewalFailedAt` (or an unchanged certificate) means the renewal failed. Fix the cause and run `cert renew` again (or `cert retry`); `--if-due` skips for about a day after a failure.
+
 ## 7. Certificate Management
 
 ```bash
