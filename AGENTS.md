@@ -179,12 +179,12 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | GET | `/endpoints/:id` | Yes | Get endpoint details |
 | PATCH | `/endpoints/:id` | Yes | Update endpoint (sni, label, isActive) |
 | DELETE | `/endpoints/:id` | Yes | Delete endpoint |
-| POST | `/endpoints/:id/regions` | Yes | Add hosted probe region (Starter tier+) |
+| POST | `/endpoints/:id/regions` | Yes | Add hosted probe region (hosted endpoint limit by plan; 1 on Starter) |
 | DELETE | `/endpoints/:id/regions/:region` | Yes | Remove hosted probe region |
 | GET | `/endpoints/:id/results` | Yes | Paginated scan results |
 | GET | `/endpoints/:id/results/latest` | Yes | Latest scan result per probe |
 | GET | `/endpoints/:id/results/export` | Yes | Export raw scan results (`?format=json` or `csv`) |
-| POST | `/endpoints/:id/scan` | Yes | Request an on-demand scan |
+| POST | `/endpoints/:id/scan` | Yes | Request an on-demand scan (once per plan scan interval; `429` sooner) |
 | GET | `/endpoints/probes/mine` | Yes | List your connected probes available for assignment |
 | POST | `/endpoints/:id/probes` | Yes | Assign connected probes to an endpoint |
 | DELETE | `/endpoints/:id/probes/:probeId` | Yes | Unassign a connected probe |
@@ -229,11 +229,12 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | PATCH | `/organizations/:id/members/:userId` | JWT only | Update member role |
 | DELETE | `/organizations/:id/members/:userId` | JWT only | Remove member |
 | POST | `/organizations/:id/transfer-ownership` | JWT only | Transfer org ownership |
-| POST | `/billing/checkout` | JWT only | Create Stripe checkout session |
-| GET | `/billing/subscription` | Yes | Get subscription status |
-| POST | `/billing/portal` | JWT only | Create Stripe portal session |
-| POST | `/billing/upgrade/preview` | Yes | Preview upgrade cost |
-| POST | `/billing/upgrade` | JWT only | Upgrade subscription |
+| GET | `/billing/plans` | Yes | Plans and billing intervals (`month`, `year`) that can be bought |
+| POST | `/billing/checkout` | JWT only | Create Stripe checkout session (`plan`, `interval`) |
+| GET | `/billing/subscription` | Yes | Get subscription status, including billing `interval` |
+| POST | `/billing/portal` | JWT only | Create Stripe portal session; `flow: switch_interval` moves between monthly and yearly |
+| POST | `/billing/upgrade/preview` | Yes | Preview the prorated upgrade charge |
+| POST | `/billing/upgrade` | JWT only | Upgrade subscription (charged at once, prorated) |
 | POST | `/billing/webhook` | No | Stripe webhook (signature verified) |
 | POST | `/feedback` | Yes | Submit feedback |
 | GET | `/connectors` | Yes | List connectors (with deployment counts) |
@@ -266,9 +267,24 @@ All errors follow this structure:
 }
 ```
 
-Validation errors return `message` as an array of strings. Branch on `statusCode`, not on `error`: some 4xx responses (plan limits, `429`) currently carry `"error": "Internal Server Error"`.
+Validation errors return `message` as an array of strings. Branch on `statusCode`, not on `error`.
 
-Plan limit errors return `402` (domains, API keys, certificates) or `403` (monitored endpoints, hosted regions and hosted endpoints), with a readable `message` such as `Monthly certificate limit reached`. The services attach `code: "plan_limit_exceeded"`, `limit`, `current` and `plan`, but the global exception filter currently drops them, so clients only see the standard fields above.
+Plan limit errors return `402` (domains, API keys, certificates, connectors, alert channels, GitHub OIDC trust policies, organization members, and creating an organization on Starter) or `403` (monitored endpoints, hosted regions and hosted endpoints, hosts per report), with a readable `message` such as `Monthly certificate limit reached`. On top of the standard fields, they carry `code: "plan_limit_exceeded"` and, where they apply, `limit`, `current`, `plan` and `upgradeTo` (the next plan up; `enterprise` from Business). The connector, alert channel, trust policy and member limits always include `upgradeTo` and a message that names it:
+
+```json
+{
+  "statusCode": 402,
+  "message": "Connector limit reached: the Starter plan includes 1. Upgrade to Pro for 5.",
+  "error": "Payment Required",
+  "code": "plan_limit_exceeded",
+  "limit": 1,
+  "current": 1,
+  "plan": "free",
+  "upgradeTo": "pro"
+}
+```
+
+Existing resources over a limit keep working (for example after a downgrade); only creating another one is refused.
 
 ### Rate Limiting
 
@@ -277,8 +293,7 @@ Tier-aware and counted per route. JWT and user API key callers are tracked by us
 | Tier | Public | Reads | Writes | Expensive | Renewals |
 |------|--------|-------|--------|-----------|----------|
 | free | 30/min | 60/min | 20/min | 5/hr | 10/hr |
-| starter | 60/min | 120/min | 40/min | 10/hr | 30/hr |
-| team | 60/min | 300/min | 60/min | 30/hr | 120/hr |
+| pro | 60/min | 300/min | 60/min | 30/hr | 120/hr |
 | business | 120/min | 600/min | 120/min | 60/hr | 300/hr |
 | enterprise | 120/min | 1000/min | 200/min | 100/hr | 600/hr |
 
@@ -292,22 +307,29 @@ Separately, 10 failed API key attempts from one IP within 15 minutes lock that I
 
 ### Plan Limits
 
-| Resource | Free | Starter | Team | Business | Enterprise |
-|----------|------|---------|------|----------|------------|
-| Domains | 3 | 10 | 25 | 75 | unlimited |
-| API keys | 2 | 5 | 10 | 25 | unlimited |
-| Certs/month | 5 | 50 | 250 | 1000 | unlimited |
-| Total active certs | 10 | 75 | 375 | 1500 | unlimited |
-| Concurrent pending (renewals past it wait) | 2 | 5 | 25 | 100 | unlimited |
-| Renewal window | 5d | 30d | 30d | 30d | 30d |
-| Monitored endpoints | 3 | 10 | 50 | 200 | unlimited |
-| Min scan interval | 60m | 30m | 5m | 1m | 1m |
-| Hosted probe regions | - | 2 | 5 | 15 | unlimited |
-| Hosted endpoints | - | 5 | 25 | 100 | unlimited |
-| Hosted scan interval | - | 30m | 15m | 5m | 1m |
-| Scan result retention | 5d | 30d | 90d | 90d | 90d |
+Plan ids are `free`, `pro`, `business` and `enterprise`. The free plan is called **Starter** in the dashboard, emails and API messages; its id stays `free`. Pro is $29/month or $290/year and Business $149/month or $1,490/year. Enterprise is sold by quote; its limits are set per agreement.
 
-Free tier gets connected probes only. Hosted monitoring starts at Starter tier.
+| Resource | Starter (`free`) | Pro | Business | Enterprise |
+|----------|------------------|-----|----------|------------|
+| Domains | 3 | 15 | 100 | custom |
+| API keys | 2 | 10 | 50 | custom |
+| Certs/month | 5 | 100 | 1,000 | custom |
+| Total active certs | 10 | 150 | 1,000 | custom |
+| Concurrent pending (renewals past it wait) | 2 | 10 | 50 | custom |
+| Renewal window | 10d | 30d | 30d | 30d |
+| Monitored endpoints | 3 | 50 | 300 | custom |
+| Connected probe scan interval (shortest) | 60m | 15m | 1m | 1m |
+| Hosted probe regions | 1 | all running | all running | all running |
+| Hosted endpoints | 1 | 25 | 150 | custom |
+| Hosted scan interval | 60m | 30m | 5m | 1m |
+| Scan result retention | 7d | 30d | 90d | 90d |
+| Hosts per report | 25 | 250 | 1,000 | 1,000 |
+| Connectors (active) | 1 | 5 | 50 | custom |
+| Alert channels | 1 | 5 | 25 | custom |
+| GitHub OIDC trust policies | 2 | 10 | 50 | custom |
+| Organization members (owner included) | no organizations | 3 | unlimited | unlimited |
+
+Counts are pooled across an organization's members. Every plan includes hosted monitoring: Starter gets one hosted endpoint, so it can try KrakenKey's hosted probes (US East today) without a probe of its own. `GET /probes/:probeId/config` returns each endpoint's `interval` from its owner's plan, and `POST /probes/report` skips results that arrive sooner than that (counted in `tooSoon`).
 
 ### Certificate Lifecycle
 
@@ -324,7 +346,7 @@ Renewals replace a certificate, so they don't count toward the monthly or total 
 
 A renewal never removes the current certificate: `crtPem`, `chainPem` and `expiresAt` stay readable while it runs and are only replaced on success. If it fails while the current certificate is still valid, the status goes back to `issued` with the same PEM, `renewalFailedAt` set and the error in `failureReason`; if the renewal used a new CSR, the CSR of the kept certificate is put back. Downloads, expiry alerts and ARI checks keep working, and the next automatic attempt is not before 20 hours after the failure, or a quarter of the time left until expiry (or the end of a CA early-replacement window) when that is sooner, but at least 2 hours after it; an hourly job renews it again then if it is due (`renewAfter` shows that time, and `?ifDue=true` skips as `not_due` with `retryAfter` until then). Requesting a renewal, or revoking, clears both fields, so after renewing, treat `issued` with `renewalFailedAt` set (and an unchanged `crtPem`) as a failed renewal, not a success. `POST /certs/tls/:id/retry` on such a certificate renews it again (`certs:renew` for a scoped key). Only a renewal whose certificate had already expired ends `failed`.
 
-Renewal timing follows the plan's renewal window (5 days before expiry on Free, 30 days on paid plans). The API also checks ACME Renewal Information (ARI, RFC 9773) hourly: if the CA asks for early replacement, for example ahead of a mass revocation, the certificate is renewed early and the user gets a `cert.replacement_requested` alert. ARI never delays a renewal the plan window would trigger.
+Renewal timing follows the plan's renewal window (10 days before expiry on Starter, the free plan; 30 days on Pro, Business and Enterprise). The API also checks ACME Renewal Information (ARI, RFC 9773) hourly: if the CA asks for early replacement, for example ahead of a mass revocation, the certificate is renewed early and the user gets a `cert.replacement_requested` alert. ARI never delays a renewal the plan window would trigger.
 
 Every certificate reports `renewAfter`, the time it will be renewed. A certificate marked `managedBy: "connector"` is never renewed by KrakenKey itself: a customer-hosted connector renews it with a new key and CSR once `renewAfter` passes, using a window of at least 30 days that also follows the CA's suggested ARI window. A pending certificate (`awaiting_csr`, created with `names` and no CSR) is issued by the connector's first `renew` call with its own CSR; the names must match `requestedNames`.
 

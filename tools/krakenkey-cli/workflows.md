@@ -243,7 +243,7 @@ krakenkey endpoint add internal.example.com --probe <probe-id>
 krakenkey endpoint probe add <endpoint-id> <probe-id>
 krakenkey endpoint probe remove <endpoint-id> <probe-id>
 
-# Hosted probe regions (Starter tier and up)
+# Hosted probe regions (1 hosted endpoint on the free plan, 25 on Pro, 150 on Business)
 krakenkey endpoint region add <endpoint-id> us-east-1
 krakenkey endpoint region remove <endpoint-id> us-east-1
 

@@ -70,7 +70,7 @@
         "displayName": "string | null",
         "notificationPreferences": "object (notification type -> boolean)",
         "createdAt": "ISO8601",
-        "plan": "string (free | starter | team | business | enterprise)",
+        "plan": "string (free | pro | business | enterprise; free is shown as Starter)",
         "autoRenewalConfirmedAt": "ISO8601 | null",
         "firstDomainAddedAt": "ISO8601 | null",
         "firstCertIssuedAt": "ISO8601 | null",
@@ -79,7 +79,11 @@
         "resourceCounts": {
           "domains": "number",
           "certificates": "number",
-          "apiKeys": "number"
+          "apiKeys": "number",
+          "connectors": "number (not revoked, pooled across the organization)",
+          "alertChannels": "number (pooled)",
+          "githubOidcTrusts": "number (pooled)",
+          "orgMembers": "number (owner included; 0 outside an organization)"
         }
       }
     },
@@ -646,7 +650,7 @@
     },
     {
       "name": "request_endpoint_scan",
-      "description": "Ask probes to scan this endpoint now. Probes that fetch their config within the next 5 minutes see scanNow: true for it. Results show up in get_endpoint_latest_results once a probe reports",
+      "description": "Ask probes to scan this endpoint now. Probes that fetch their config within the next 5 minutes see scanNow: true for it. Results show up in get_endpoint_latest_results once a probe reports. Allowed once per the owner's plan interval (60 minutes on free, 15 on Pro, 1 on Business and Enterprise; the hosted interval when the endpoint has a hosted region and that is longer); sooner returns 429 with a message saying when to try again",
       "method": "POST",
       "path": "/endpoints/{id}/scan",
       "auth_required": true,
@@ -723,7 +727,7 @@
     },
     {
       "name": "add_hosted_region",
-      "description": "Have KrakenKey-operated probes in a region scan this endpoint. Not available on the free plan. Returns 403 when the plan has no hosted monitoring, or when the hosted endpoint or hosted region limit (pooled across org members) is reached. Adding a region the endpoint already has returns the existing record",
+      "description": "Have KrakenKey-operated probes in a region scan this endpoint. Every plan includes hosted endpoints (1 on free, 25 on Pro, 150 on Business); the free plan uses one region, paid plans every region that runs. Returns 403 with code plan_limit_exceeded when the hosted endpoint or hosted region limit (pooled across org members) is reached. Adding a region the endpoint already has returns the existing record",
       "method": "POST",
       "path": "/endpoints/{id}/regions",
       "auth_required": true,
@@ -879,7 +883,7 @@
     },
     {
       "name": "submit_probe_report",
-      "description": "Submit TLS scan results from a registered probe (404 if the probeId is not registered). Each result is matched to the caller's endpoints by host and port. Use mode 'connected' with a user API key; 'hosted' is reserved for KrakenKey-operated probes using a service key, and standalone results are not stored. Results with no matching endpoint are skipped, not rejected",
+      "description": "Submit TLS scan results from a registered probe (404 if the probeId is not registered). Each result is matched by host, port and SNI: a connected probe's results to the caller's endpoints assigned to that probe, a hosted probe's to endpoints in the region it registered with. A result that arrives sooner than the endpoint's plan interval after this probe's previous one (see get_probe_config) is skipped and counted in tooSoon, unless a scan was requested since. Use mode 'connected' with a user API key; 'hosted' is reserved for KrakenKey-operated probes using a service key, and standalone results are not stored. Results with no matching endpoint are skipped, not rejected",
       "method": "POST",
       "path": "/probes/report",
       "auth_required": true,
@@ -903,7 +907,8 @@
         }
       },
       "response": {
-        "accepted": "number (results stored)"
+        "accepted": "number (results stored)",
+        "tooSoon": "number (results skipped: sooner than the endpoint's interval, or a second result for the same endpoint)"
       }
     },
     {
@@ -920,8 +925,8 @@
         }
       },
       "response": {
-        "endpoints": [{ "host": "string", "port": "number", "sni": "string (defaults to host)", "userId": "string", "scanNow": "boolean (present and true when a scan was requested in the last 5 minutes)" }],
-        "interval": "string (server-configured scan interval, e.g. '60m')"
+        "endpoints": [{ "host": "string", "port": "number", "sni": "string (defaults to host)", "userId": "string", "interval": "string (Go duration from the owner's plan, e.g. '30m': for a hosted probe how often to scan, for a connected probe the shortest interval the API accepts)", "lastScanAt": "ISO8601 (when the API received this probe's last accepted result for the endpoint; omitted when none)", "scanNow": "boolean (present and true while a scan requested in the last 5 minutes is newer than this probe's last result)" }],
+        "interval": "string (the shortest endpoint interval, or '60m' with no endpoints; for probes that read only one interval)"
       }
     },
     {
@@ -996,8 +1001,9 @@
       "parameters": {},
       "response": {
         "id": "string (UUID, omitted on the default free response)",
-        "plan": "string (free | starter | team | business | enterprise)",
+        "plan": "string (free | pro | business | enterprise)",
         "status": "string (active | past_due | canceled | incomplete | trialing)",
+        "interval": "string (month | year) | null (null on the free plan and for Microsoft Marketplace subscriptions)",
         "currentPeriodEnd": "ISO8601 | null",
         "cancelAtPeriodEnd": "boolean",
         "organizationId": "string (UUID) | null",
@@ -1005,22 +1011,37 @@
       }
     },
     {
+      "name": "get_billing_plans",
+      "description": "List the plans and billing intervals that can be bought with Stripe on this installation (no prices; list prices are on krakenkey.io/pricing). A plan or interval without a configured price is left out",
+      "method": "GET",
+      "path": "/billing/plans",
+      "auth_required": true,
+      "rate_limit_category": "read",
+      "parameters": {},
+      "response": {
+        "plans": [{ "plan": "string (pro | business)", "intervals": ["string (month | year)"] }]
+      }
+    },
+    {
       "name": "preview_upgrade",
-      "description": "Preview the immediate charge for upgrading an active paid subscription to a higher plan. The charge is the flat difference between the two plan prices (no day-based proration). Returns 404 with no active paid subscription (from free, the user upgrades on the Billing page in the dashboard), 400 if the target is not higher than the current plan",
+      "description": "Preview the immediate charge for upgrading an active paid subscription to a higher plan, as Stripe will charge it: the new price for the rest of the period less the unused time on the current plan. Changing interval in the same upgrade starts a new billing period now. Returns 404 with no active paid subscription (from free, the user upgrades on the Billing page in the dashboard), 400 if the target is not higher than the current plan or can't be bought, 409 for a Microsoft Marketplace subscription",
       "method": "POST",
       "path": "/billing/upgrade/preview",
       "auth_required": true,
       "rate_limit_category": "read",
       "parameters": {
         "body": {
-          "plan": { "type": "string", "enum": ["starter", "team", "business", "enterprise"], "required": true }
+          "plan": { "type": "string", "enum": ["pro", "business", "enterprise"], "required": true },
+          "interval": { "type": "string", "enum": ["month", "year"], "required": false, "description": "Billing interval after the upgrade; the current one when left out" }
         }
       },
       "response": {
         "immediateAmountCents": "number",
         "currency": "string",
         "targetPlan": "string",
-        "currentPeriodEnd": "ISO8601"
+        "targetInterval": "string (month | year)",
+        "currentPeriodEnd": "ISO8601 (one new interval from now when the interval changes)",
+        "prorationDate": "number (Unix time the preview was prorated from; the dashboard sends it with the upgrade)"
       }
     },
     {

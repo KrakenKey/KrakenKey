@@ -8,7 +8,7 @@ This document tracks current limitations and planned improvements in KrakenKey. 
 
 ### Auto-renewal threshold is not configurable
 
-The renewal window is set by plan: certificates on the free plan are renewed 5 days before expiry, and certificates on paid plans (Starter, Team, Business, Enterprise) 30 days before expiry. The threshold cannot be changed per certificate or per user. Auto-renewal itself can still be turned on or off for each certificate.
+The renewal window is set by plan: certificates on the free Starter plan are renewed 10 days before expiry, and certificates on paid plans (Pro, Business, Enterprise) 30 days before expiry. Certificates renewed by a connector use a window of at least 30 days on every plan. The threshold cannot be changed per certificate or per user. Auto-renewal itself can still be turned on or off for each certificate.
 
 ### No certificate download endpoint
 
