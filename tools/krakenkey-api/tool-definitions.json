@@ -294,6 +294,7 @@
           "renewAfter": "ISO8601 | null (when the certificate will be renewed: expiry minus the plan window, earlier if the CA asked for early replacement; connector-managed certificates use at least 30 days and follow the CA's suggested window)",
           "renewalCount": "number",
           "lastRenewalAttemptAt": "ISO8601 | null",
+          "renewalQueuedAt": "ISO8601 | null (set while a renewal waits for a free concurrent pending slot; status is renewing)",
           "revocationReason": "number | null",
           "failureReason": "string (why the last attempt failed) | null",
           "revokedAt": "ISO8601 | null",
@@ -461,11 +462,11 @@
     },
     {
       "name": "renew_certificate",
-      "description": "Renew an issued certificate. Without a body the stored CSR is reused, so the key pair stays the same; send csrPem to renew with a new key (the CSR must carry exactly the certificate's names, otherwise 400). With ifDue=true it only renews when the certificate is due and otherwise returns 200 with skipped: true. Only works when status is 'issued'. Subject to the same plan limits as issuance (402). Async; poll get_certificate until status returns to 'issued'. crtPem and chainPem are cleared while the renewal runs, so save the current certificate first if you still need it",
+      "description": "Renew an issued certificate. Without a body the stored CSR is reused, so the key pair stays the same; send csrPem to renew with a new key (the CSR must carry exactly the certificate's names, otherwise 400). With ifDue=true it only renews when the certificate is due and otherwise returns 200 with skipped: true. Only works when status is 'issued'. Never refused for a plan limit: 201 with queued: false when it starts, 202 with queued: true when the account's concurrent pending slots are full (status renewing, renewalQueuedAt set; it starts on its own as earlier requests finish, so don't call renew again). 409 if the certificate is already renewing (running or waiting) or another renew request won the race; with ifDue=true an already renewing certificate returns 200 with skipped: true and reason 'in_progress' instead. Completing an awaiting_csr certificate is a new certificate and can still get 402. Async; poll get_certificate until status returns to 'issued'. crtPem and chainPem are cleared once the renewal starts, so save the current certificate first if you still need it",
       "method": "POST",
       "path": "/certs/tls/{id}/renew",
       "auth_required": true,
-      "rate_limit_category": "expensive",
+      "rate_limit_category": "renewal",
       "parameters": {
         "path": {
           "id": { "type": "number", "required": true }
@@ -481,7 +482,8 @@
         "id": "number",
         "status": "string (renewing, or issued when skipped)",
         "skipped": "boolean (ifDue only)",
-        "reason": "string (not_due, when skipped)",
+        "queued": "boolean (when not skipped: true if waiting for a free concurrent pending slot, HTTP 202)",
+        "reason": "string (when skipped: not_due, or in_progress when a renewal is already running or waiting)",
         "expiresAt": "ISO8601 (when skipped)",
         "renewalWindowDays": "number (when skipped)"
       }
@@ -505,7 +507,7 @@
     },
     {
       "name": "revoke_certificate",
-      "description": "Revoke an issued certificate with the CA. Only works when status is 'issued' and only on certificates the caller created (not other org members'). Synchronous: returns status 'revoked' on success; on a CA error returns 500 and the status goes back to 'issued'",
+      "description": "Revoke an issued certificate with the CA. Works when status is 'issued', and only on certificates the caller created (not other org members'). Synchronous: returns status 'revoked' on success; on a CA error returns 500 and the status goes back to 'issued'. A certificate whose renewal is still waiting (status renewing, renewalQueuedAt set) can be revoked too; the waiting renewal is dropped. 409 if the certificate changed state meanwhile (for example the waiting renewal started)",
       "method": "POST",
       "path": "/certs/tls/{id}/revoke",
       "auth_required": true,

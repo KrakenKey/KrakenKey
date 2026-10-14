@@ -197,7 +197,7 @@ The probe endpoints (`/probes/*`) accept either user API keys or service keys (d
 | GET | `/certs/tls/:id/details` | Yes | Get parsed cert details (issued only) |
 | GET | `/certs/tls/:id/chain` | Yes | Get intermediate chain details; `chainPem` and `fullChainPem` |
 | PATCH | `/certs/tls/:id` | Yes | Update cert (`autoRenew`, `managedBy`) |
-| POST | `/certs/tls/:id/renew` | Yes | Renew certificate; optional `csrPem` body rotates the key, `?ifDue=true` skips when not due |
+| POST | `/certs/tls/:id/renew` | Yes | Renew certificate; optional `csrPem` body rotates the key, `?ifDue=true` skips when not due; `202` when it waits for a free pending slot |
 | POST | `/certs/tls/:id/retry` | Yes | Retry failed issuance |
 | POST | `/certs/tls/:id/revoke` | Yes | Revoke certificate |
 | DELETE | `/certs/tls/:id` | Yes | Delete failed/revoked cert |
@@ -274,15 +274,15 @@ Plan limit errors return `402` (domains, API keys, certificates) or `403` (monit
 
 Tier-aware and counted per route. JWT and user API key callers are tracked by user ID, with an API key counted against its owner at the owner's plan tier, so all of a user's keys share one bucket. Service keys, unknown keys, unauthenticated callers and every request to a public route are tracked by client IP. Details: [app/docs/RATE_LIMITING.md](https://github.com/KrakenKey/app/blob/main/docs/RATE_LIMITING.md).
 
-| Tier | Public | Reads | Writes | Expensive |
-|------|--------|-------|--------|-----------|
-| free | 30/min | 60/min | 20/min | 5/hr |
-| starter | 60/min | 120/min | 40/min | 10/hr |
-| team | 60/min | 300/min | 60/min | 30/hr |
-| business | 120/min | 600/min | 120/min | 60/hr |
-| enterprise | 120/min | 1000/min | 200/min | 100/hr |
+| Tier | Public | Reads | Writes | Expensive | Renewals |
+|------|--------|-------|--------|-----------|----------|
+| free | 30/min | 60/min | 20/min | 5/hr | 10/hr |
+| starter | 60/min | 120/min | 40/min | 10/hr | 30/hr |
+| team | 60/min | 300/min | 60/min | 30/hr | 120/hr |
+| business | 120/min | 600/min | 120/min | 60/hr | 300/hr |
+| enterprise | 120/min | 1000/min | 200/min | 100/hr | 600/hr |
 
-Expensive operations: cert issuance, renewal, retry, revocation, domain verification.
+Expensive operations: cert issuance, retry, revocation, domain verification. Renewals (`POST /certs/tls/:id/renew`) have their own allowance; `ifDue=true` calls count even when nothing is due.
 
 Connector routes have their own limits: `POST /connectors/enroll` and `/connectors/rotate` 10/min per IP, `POST /connectors/token` 60/min per IP, `POST /connectors/report` 60/hour per connector, and `PUT /connectors/config` a separate 60/hour per connector.
 
@@ -298,7 +298,7 @@ Separately, 10 failed API key attempts from one IP within 15 minutes lock that I
 | API keys | 2 | 5 | 10 | 25 | unlimited |
 | Certs/month | 5 | 50 | 250 | 1000 | unlimited |
 | Total active certs | 10 | 75 | 375 | 1500 | unlimited |
-| Concurrent pending | 2 | 5 | 25 | 100 | unlimited |
+| Concurrent pending (renewals past it wait) | 2 | 5 | 25 | 100 | unlimited |
 | Renewal window | 5d | 30d | 30d | 30d | 30d |
 | Monitored endpoints | 3 | 10 | 50 | 200 | unlimited |
 | Min scan interval | 60m | 30m | 5m | 1m | 1m |
@@ -319,6 +319,8 @@ issued -> revoking -> revoked (delete possible)
 ```
 
 Issuance is asynchronous via BullMQ. Typical time: 2-5 minutes. Poll `GET /certs/tls/:id` for status.
+
+Renewals replace a certificate, so they don't count toward the monthly or total active limits and are never refused for a plan limit. A started renewal takes one of the account's concurrent pending slots, shared with new requests. When they are all in use, the renewal waits: `POST /certs/tls/:id/renew` returns `202` with `"queued": true`, the status is `renewing` and `renewalQueuedAt` is set. It starts on its own, oldest first, as earlier requests finish, and nothing is sent to the CA until then. Keep polling `GET /certs/tls/:id`; don't call renew again: while a renewal runs or waits, renew returns `409`, or `200` with `"skipped": true, "reason": "in_progress"` under `?ifDue=true` (nothing changes; `krakenkey cert renew --if-due` treats it as a skip and exits 0). A certificate whose renewal is still waiting can be revoked (the waiting renewal is dropped). A request whose job is lost is recovered after 30 minutes: a renewal goes back to `issued` (or back into the queue, at most until it has been recovered three times, then `failed`), a new certificate to `failed` with a reason and the usual failure email, so retry works.
 
 Renewal timing follows the plan's renewal window (5 days before expiry on Free, 30 days on paid plans). The API also checks ACME Renewal Information (ARI, RFC 9773) hourly: if the CA asks for early replacement, for example ahead of a mass revocation, the certificate is renewed early and the user gets a `cert.replacement_requested` alert. ARI never delays a renewal the plan window would trigger.
 

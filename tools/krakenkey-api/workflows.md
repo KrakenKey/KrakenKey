@@ -118,11 +118,14 @@ Manual renewal:
 ```
 Step 1: Save the current certificate if it is still in use
   GET /certs/tls/{id}/chain
-  crtPem and chainPem are cleared while the renewal runs, and stay empty if it fails.
+  crtPem and chainPem are cleared once the renewal starts, and stay empty if it fails.
 
 Step 2: Trigger renewal (status must be "issued", otherwise 400)
   POST /certs/tls/{id}/renew
-  Response: { "id": 42, "status": "renewing" }
+  Response 201: { "id": 42, "status": "renewing", "skipped": false, "queued": false }
+  Response 202: same with "queued": true when the account's concurrent pending
+  slots are full; it starts on its own as earlier requests finish. Don't call
+  renew again; just poll.
 
 Step 3: Poll until the status is "issued" again (or "failed")
   GET /certs/tls/{id}
@@ -130,7 +133,7 @@ Step 3: Poll until the status is "issued" again (or "failed")
 Step 4: Fetch and deploy the new chain (workflow 3)
 ```
 
-Without a body, renewal reuses the stored CSR, so the key pair stays the same. To rotate the key, send a new CSR with exactly the certificate's names: `POST /certs/tls/{id}/renew` with `{ "csrPem": "..." }` (a different set of names returns `400`). Either way it is checked against the same plan limits as issuance (402) and needs the same `_acme-challenge` CNAMEs.
+Without a body, renewal reuses the stored CSR, so the key pair stays the same. To rotate the key, send a new CSR with exactly the certificate's names: `POST /certs/tls/{id}/renew` with `{ "csrPem": "..." }` (a different set of names returns `400`). Either way it needs the same `_acme-challenge` CNAMEs as issuance. A renewal is never refused for a plan limit: it doesn't count toward the monthly or issued certificate limits, and past the concurrent pending limit it waits (`202`, `renewalQueuedAt` set on the certificate) instead of failing. While a renewal runs or waits, renew returns `409`; with `?ifDue=true` it returns `200` with `{ "skipped": true, "reason": "in_progress", "queued": ... }` instead, so a scheduled job doesn't fail (`krakenkey cert renew --if-due` exits 0 on it). A certificate whose renewal is still waiting can be revoked; the waiting renewal is dropped. If a request's job is lost, it is recovered after 30 minutes: a renewal goes back to `issued` (or back into the queue), a new certificate to `failed` with a `failureReason`, so retry works.
 
 `?ifDue=true` renews only when the certificate is due and otherwise returns `200` with `{ "skipped": true, "reason": "not_due", ... }`, which makes it safe to call from a scheduled job. Every certificate reports `renewAfter`, the time it will be renewed: expiry minus the plan window, moved earlier if the CA asked for early replacement (ARI).
 
@@ -342,7 +345,7 @@ Checkout, upgrade, and the Stripe portal return `403` to API keys. To change pla
 | API keys | 2 | 5 | 10 | 25 | unlimited |
 | Certificates created per calendar month (UTC) | 5 | 50 | 250 | 1000 | unlimited |
 | Issued certificates | 10 | 75 | 375 | 1500 | unlimited |
-| Concurrent pending/issuing/renewing | 2 | 5 | 25 | 100 | unlimited |
+| Concurrent pending/issuing/renewing (renewals past it wait instead of failing) | 2 | 5 | 25 | 100 | unlimited |
 | Auto-renewal window (days before expiry) | 5 | 30 | 30 | 30 | 30 |
 | Monitored endpoints | 3 | 10 | 50 | 200 | unlimited |
 | Hosted regions (total across endpoints) | 0 | 2 | 5 | 15 | unlimited |
@@ -371,10 +374,10 @@ Status codes to handle:
 
 - `400`: fix the request. Validation errors, or the resource is in the wrong state (for example renewing a certificate that is not `issued`). Read `message`.
 - `401`: missing, invalid, or expired token or API key. Do not retry with the same credentials.
-- `402`: plan limit reached (domains, API keys, certificate limits) or a feature that needs a higher plan (organizations). `message` names the limit, for example "Monthly certificate limit reached". Tell the user; retrying will not help until they upgrade or free up capacity.
+- `402`: plan limit reached (domains, API keys, certificate limits; never for a renewal) or a feature that needs a higher plan (organizations). `message` names the limit, for example "Monthly certificate limit reached". Tell the user; retrying will not help until they upgrade or free up capacity.
 - `403`: not allowed. A dashboard-only action called with an API key ("API keys cannot be used for this action"; see the README), endpoint and hosted-region plan limits ("Endpoint limit reached", "Hosted monitoring is not available on your plan"), org role checks, billing outside the org owner, or admin-only routes.
 - `404`: the resource does not exist or the caller cannot see it.
-- `409`: conflict. Duplicate certificate request still in progress, already in an organization, or the organization is dissolving.
+- `409`: conflict. Duplicate certificate request still in progress, a renewal of the certificate already running or waiting (or another renew request won the race), a revoke that lost a race, already in an organization, or the organization is dissolving.
 - `429`: rate limited. Wait for the number of seconds in the `Retry-After` response header before retrying. Also returned after too many invalid API key attempts from one IP.
 - `500`: server or CA error. For revocation, the certificate stays `issued`; retry later.
 - `503`: dependency unavailable (readiness check, public scan).
@@ -385,21 +388,21 @@ Plan limit responses currently contain only the standard fields above. Do not re
 
 Limits depend on the plan and the route category. Each tool in `tool-definitions.json` has a `rate_limit_category`.
 
-| Plan | public | read | write | expensive |
-|------|--------|------|-------|-----------|
-| free | 30/min | 60/min | 20/min | 5/hour |
-| starter | 60/min | 120/min | 40/min | 10/hour |
-| team | 60/min | 300/min | 60/min | 30/hour |
-| business | 120/min | 600/min | 120/min | 60/hour |
-| enterprise | 120/min | 1000/min | 200/min | 100/hour |
+| Plan | public | read | write | expensive | renewal |
+|------|--------|------|-------|-----------|---------|
+| free | 30/min | 60/min | 20/min | 5/hour | 10/hour |
+| starter | 60/min | 120/min | 40/min | 10/hour | 30/hour |
+| team | 60/min | 300/min | 60/min | 30/hour | 120/hour |
+| business | 120/min | 600/min | 120/min | 60/hour | 300/hour |
+| enterprise | 120/min | 1000/min | 200/min | 100/hour | 600/hour |
 
 How it is applied:
 
-- Each route has its own counter. Five certificate requests per hour on free does not use up the five renewals or five domain verifications.
+- Each route has its own counter. Five certificate requests per hour on free does not use up the ten renewals or five domain verifications. `ifDue=true` renew calls count even when nothing is due.
 - Requests with a JWT are counted per user at the user's plan.
 - Requests with a user `kk_` API key are counted against the key's owner at the owner's plan, so all of a user's keys share one counter.
 - Service keys, unknown keys, unauthenticated requests and every request to a public route are counted per client IP at the free-plan limits.
-- Windows are fixed. Exceeding a limit blocks that route for one full window (one minute, or one hour for `expensive`).
+- Windows are fixed. Exceeding a limit blocks that route for one full window (one minute, or one hour for `expensive` and `renewal`).
 - Successful responses include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset`. A `429` includes `Retry-After` in seconds.
 
-Polling guidance: poll `GET /certs/tls/{id}` every 15-30 seconds (a `read` route). Never poll `verify`, `renew`, `retry`, `revoke`, or `POST /certs/tls`; they are `expensive`.
+Polling guidance: poll `GET /certs/tls/{id}` every 15-30 seconds (a `read` route). Never poll `verify`, `renew`, `retry`, `revoke`, or `POST /certs/tls`; they are `expensive` or `renewal` routes with hourly limits.
