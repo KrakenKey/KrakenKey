@@ -5,4 +5,4 @@ contact_links:
     about: Ask questions and get help from the community. Please don't open an issue for support requests.
   - name: Security Vulnerabilities
     url: https://github.com/krakenkey/krakenkey/blob/main/SECURITY.md
-    about: Please report security vulnerabilities responsibly. Do NOT open a public issue.
+    about: Report vulnerabilities privately (GitHub's "Report a vulnerability" or security@krakenkey.io). Do NOT open a public issue.

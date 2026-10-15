@@ -42,6 +42,12 @@ body:
         - Domain Management
         - Authentication / API Keys
         - DNS Provider Support
+        - Endpoint Monitoring / Probe
+        - CLI
+        - Connector
+        - GitHub Action (cert-action)
+        - Terraform Provider
+        - Packages (apt, dnf, Homebrew)
         - Developer Experience
         - Documentation
         - Other
