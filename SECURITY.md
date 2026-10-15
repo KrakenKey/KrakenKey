@@ -4,9 +4,10 @@
 
 **Please do NOT report security vulnerabilities through public GitHub issues.**
 
-If you discover a security vulnerability in KrakenKey, please report it responsibly by emailing:
+If you discover a security vulnerability in KrakenKey, please report it privately in either of these ways:
 
-**security@krakenkey.io**
+- **GitHub private vulnerability reporting:** open the affected repository's **Security** tab and choose **Report a vulnerability**.
+- **Email:** **security@krakenkey.io**
 
 Include:
 
@@ -28,6 +29,7 @@ This policy applies to:
 - The KrakenKey application (backend API and frontend dashboard)
 - The managed service at krakenkey.io
 - The KrakenKey REST API
+- The CLI, probe, connector, GitHub Action (cert-action) and Terraform provider, and their release archives and packages
 
 Out of scope:
 
