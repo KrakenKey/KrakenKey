@@ -111,7 +111,7 @@ Step 2: Write the files the server expects
 
 ## 4. Renew a Certificate
 
-Certificates with `autoRenew: true` (the default) renew automatically. A daily job queues renewal once a certificate is inside its plan's renewal window: 5 days before expiry on free, 30 days on paid plans. On the free plan, auto-renewal pauses if the user has not confirmed it in the last 6 months; `POST /auth/confirm-auto-renewal` resets that. Auto-renewal is skipped, and the user notified by email, when the monthly certificate limit is reached.
+Certificates with `autoRenew: true` (the default) renew automatically. A daily job queues renewal once a certificate is inside its plan's renewal window: 10 days before expiry on the free plan (called Starter), 30 days on Pro, Business and Enterprise. On the free plan, auto-renewal pauses if the user has not confirmed it in the last 6 months; `POST /auth/confirm-auto-renewal` resets that. Auto-renewal is skipped, and the user notified by email, when the monthly certificate limit is reached.
 
 Manual renewal:
 
@@ -205,8 +205,8 @@ The key is created by the poll that finds the login approved and is returned onl
 
 Endpoints are scanned by probes. There are two ways to get scans:
 
-- **Hosted probes** (Starter plan and up): KrakenKey-operated probes in a region.
-- **Connected probes** (all plans): a `krakenkey-probe` the user runs, authenticated with a `kk_` API key.
+- **Hosted probes** (every plan; 1 hosted endpoint on the free plan, 25 on Pro, 150 on Business): KrakenKey-operated probes in a region (`us-east-1` today). They scan every 60 minutes on the free plan, 30 on Pro, 5 on Business and 1 on Enterprise.
+- **Connected probes** (all plans): a `krakenkey-probe` the user runs, authenticated with a `kk_` API key. The API accepts their results at most once per 60 minutes on the free plan, 15 on Pro and 1 on Business and Enterprise per endpoint; faster results are skipped.
 
 ```
 Step 1: Create the endpoint
@@ -219,7 +219,8 @@ Step 1: Create the endpoint
 Step 2a (hosted): Add a region
   POST /endpoints/{id}/regions
   Body: { "region": "us-east-1" }
-  403 on the free plan, or when the hosted endpoint or hosted region limit is reached.
+  403 with code plan_limit_exceeded when the hosted endpoint or hosted region limit is reached
+  (the free plan allows one endpoint in one region).
 
 Step 2b (connected): Assign the user's probe
   GET /endpoints/probes/mine           -> pick a probe id
@@ -244,7 +245,9 @@ Steps 2a and 2b can also be done in step 1 with `hostedRegions` and `probeIds` i
 ## 8. Manage Monitored Endpoints
 
 ```
-# Request a scan now (probes see it the next time they fetch config, within 5 minutes)
+# Request a scan now (probes see it the next time they fetch config, within 5 minutes).
+# Once per plan interval (60, 15 or 1 minutes; the hosted interval when the endpoint
+# has a hosted region and it is longer). Sooner returns 429 saying when to try again.
 POST /endpoints/{id}/scan
 
 # Pause or resume monitoring (inactive endpoints are not given to probes)
@@ -267,7 +270,7 @@ DELETE /endpoints/{id}/probes/{probeId}
 DELETE /endpoints/{id}
 ```
 
-Scan results older than the plan's retention period (5 days on free, 30 on Starter, 90 on Team and up) are deleted daily.
+Scan results older than the plan's retention period (7 days on free, 30 on Pro, 90 on Business and Enterprise) are deleted daily.
 
 ## 9. Connected Probe (Self-Hosted)
 
@@ -328,39 +331,57 @@ Organizations are managed in the dashboard (Organizations page). With an API key
 GET /organizations/{id}
 ```
 
-Creating, renaming, and dissolving an organization, inviting and removing members, changing roles, and transferring ownership return `403` to API keys. Creating one needs a Team plan or higher. Members share domains, certificates, and endpoints, and plan limits are counted across all members.
+Creating, renaming, and dissolving an organization, inviting and removing members, changing roles, and transferring ownership return `403` to API keys. Creating one needs the Pro plan or higher (`402` on the free plan). Pro allows 3 members, owner included; Business and Enterprise have no member limit. Members share domains, certificates, and endpoints, and plan limits are counted across all members.
 
 ## 12. Subscription and Upgrades
+
+Plan ids are `free`, `pro`, `business` and `enterprise`. The free plan is shown as "Starter" in the dashboard and in API messages. Pro and Business are billed monthly or yearly (a year costs ten months); Enterprise is sold by quote.
 
 ```
 # Current plan (users with no subscription get plan "free", status "active")
 GET /billing/subscription
+Response includes "interval": "month" | "year" for a Stripe subscription,
+null on the free plan and for Microsoft Marketplace subscriptions
+
+# Plans and intervals that can be bought here
+GET /billing/plans
+Response: { "plans": [ { "plan": "pro", "intervals": ["month", "year"] },
+                       { "plan": "business", "intervals": ["month", "year"] } ] }
 
 # Paid -> higher paid plan: preview the charge
 POST /billing/upgrade/preview
-Body: { "plan": "team" }
-Response: { "immediateAmountCents": 5000, "currency": "usd", "targetPlan": "team",
-            "currentPeriodEnd": "..." }
+Body: { "plan": "business", "interval": "year" }     (interval defaults to the current one)
+Response: { "immediateAmountCents": 120000, "currency": "usd", "targetPlan": "business",
+            "targetInterval": "year", "currentPeriodEnd": "...", "prorationDate": 1791000000 }
 ```
 
-Checkout, upgrade, and the Stripe portal return `403` to API keys. To change plan, send the user to the Billing page in the dashboard. Preview returns `404` without an active paid subscription and `400` if the target plan is not higher than the current one. In an organization only the owner can use billing (`403` for other members).
+The preview is Stripe's own calculation of the upgrade: the new price for the rest of the period less the unused time on the current plan, charged at once. Changing the interval as part of the upgrade starts a new billing period that day.
+
+Checkout, upgrade, and the Stripe portal return `403` to API keys. To change plan, send the user to the Billing page in the dashboard; downgrades and switching between monthly and yearly billing also happen there, through the Stripe portal. Preview returns `404` without an active paid subscription, `400` if the target plan is not higher than the current one or can't be bought, and `409` for a subscription billed through Microsoft Marketplace. In an organization only the owner can use billing (`403` for other members).
 
 ## Plan Limits
 
-| Resource | Free | Starter | Team | Business | Enterprise |
-|----------|------|---------|------|----------|------------|
-| Domains | 3 | 10 | 25 | 75 | unlimited |
-| API keys | 2 | 5 | 10 | 25 | unlimited |
-| Certificates created per calendar month (UTC) | 5 | 50 | 250 | 1000 | unlimited |
-| Issued certificates | 10 | 75 | 375 | 1500 | unlimited |
-| Concurrent pending/issuing/renewing (renewals past it wait instead of failing) | 2 | 5 | 25 | 100 | unlimited |
-| Auto-renewal window (days before expiry) | 5 | 30 | 30 | 30 | 30 |
-| Monitored endpoints | 3 | 10 | 50 | 200 | unlimited |
-| Hosted regions (total across endpoints) | 0 | 2 | 5 | 15 | unlimited |
-| Endpoints with hosted monitoring | 0 | 5 | 25 | 100 | unlimited |
-| Scan result retention (days) | 5 | 30 | 90 | 90 | 90 |
+| Resource | Free (Starter) | Pro | Business | Enterprise |
+|----------|----------------|-----|----------|------------|
+| Domains | 3 | 15 | 100 | custom |
+| API keys | 2 | 10 | 50 | custom |
+| Certificates created per calendar month (UTC) | 5 | 100 | 1,000 | custom |
+| Issued certificates | 10 | 150 | 1,000 | custom |
+| Concurrent pending/issuing/renewing (renewals past it wait instead of failing) | 2 | 10 | 50 | custom |
+| Auto-renewal window (days before expiry) | 10 | 30 | 30 | 30 |
+| Monitored endpoints | 3 | 50 | 300 | custom |
+| Hosted regions (total across endpoints) | 1 | all | all | all |
+| Endpoints with hosted monitoring | 1 | 25 | 150 | custom |
+| Hosted scan interval (minutes) | 60 | 30 | 5 | 1 |
+| Shortest connected probe interval (minutes) | 60 | 15 | 1 | 1 |
+| Scan result retention (days) | 7 | 30 | 90 | 90 |
+| Hosts per portfolio report | 25 | 250 | 1,000 | 1,000 |
+| Connectors (not revoked) | 1 | 5 | 50 | custom |
+| Alert channels | 1 | 5 | 25 | custom |
+| GitHub OIDC trust policies | 2 | 10 | 50 | custom |
+| Organization members (owner included) | no organizations | 3 | unlimited | unlimited |
 
-Limits are counted across all members of an organization.
+Limits are counted across all members of an organization. Going over a limit, for example after a downgrade, never removes anything; only creating another resource is refused.
 
 ## Error Handling
 
@@ -382,15 +403,30 @@ Status codes to handle:
 
 - `400`: fix the request. Validation errors, or the resource is in the wrong state (for example renewing a certificate that is not `issued`). Read `message`.
 - `401`: missing, invalid, or expired token or API key. Do not retry with the same credentials.
-- `402`: plan limit reached (domains, API keys, certificate limits; never for a renewal) or a feature that needs a higher plan (organizations). `message` names the limit, for example "Monthly certificate limit reached". Tell the user; retrying will not help until they upgrade or free up capacity.
-- `403`: not allowed. A dashboard-only action called with an API key ("API keys cannot be used for this action"; see the README), endpoint and hosted-region plan limits ("Endpoint limit reached", "Hosted monitoring is not available on your plan"), org role checks, billing outside the org owner, or admin-only routes.
+- `402`: plan limit reached (domains, API keys, certificate limits, connectors, alert channels, GitHub trust policies, organization members; never for a renewal) or a feature that needs a higher plan (organizations). `message` names the limit, for example "Monthly certificate limit reached". Tell the user; retrying will not help until they upgrade or free up capacity.
+- `403`: not allowed. A dashboard-only action called with an API key ("API keys cannot be used for this action"; see the README), endpoint, hosted-endpoint and hosted-region plan limits ("Endpoint limit reached", "Hosted endpoint limit reached"), too many hosts in a report, org role checks, billing outside the org owner, or admin-only routes.
 - `404`: the resource does not exist or the caller cannot see it.
-- `409`: conflict. Duplicate certificate request still in progress, a renewal of the certificate already running or waiting (or another renew request won the race), a revoke that lost a race, already in an organization, or the organization is dissolving.
-- `429`: rate limited. Wait for the number of seconds in the `Retry-After` response header before retrying. Also returned after too many invalid API key attempts from one IP.
+- `409`: conflict. Duplicate certificate request still in progress, a renewal of the certificate already running or waiting (or another renew request won the race), a revoke that lost a race, already in an organization, the organization is dissolving, or another request for the same account was creating a limited resource at the same moment (retry once).
+- `429`: rate limited. Wait for the number of seconds in the `Retry-After` response header before retrying. Also returned after too many invalid API key attempts from one IP, and by `POST /endpoints/{id}/scan` within the plan's scan interval (the message says when to try again).
 - `500`: server or CA error. For revocation, the certificate stays `issued`; retry later.
 - `503`: dependency unavailable (readiness check, public scan).
 
-Plan limit responses currently contain only the standard fields above. Do not rely on extra fields such as `code`, `limit`, or `current`; use the status code and `message`.
+Plan limit responses (`402` or `403`) add `code: "plan_limit_exceeded"` and, where they apply, `limit`, `current`, `plan` (the plan id) and `upgradeTo` (the next plan up, `enterprise` from Business):
+
+```json
+{
+  "statusCode": 402,
+  "message": "Alert channel limit reached: the Starter plan includes 1. Upgrade to Pro for 5.",
+  "error": "Payment Required",
+  "timestamp": "2026-10-14T10:30:00.000Z",
+  "path": "/notifications/channels",
+  "code": "plan_limit_exceeded",
+  "limit": 1,
+  "current": 1,
+  "plan": "free",
+  "upgradeTo": "pro"
+}
+```
 
 ## Rate Limiting
 
@@ -399,8 +435,7 @@ Limits depend on the plan and the route category. Each tool in `tool-definitions
 | Plan | public | read | write | expensive | renewal |
 |------|--------|------|-------|-----------|---------|
 | free | 30/min | 60/min | 20/min | 5/hour | 10/hour |
-| starter | 60/min | 120/min | 40/min | 10/hour | 30/hour |
-| team | 60/min | 300/min | 60/min | 30/hour | 120/hour |
+| pro | 60/min | 300/min | 60/min | 30/hour | 120/hour |
 | business | 120/min | 600/min | 120/min | 60/hour | 300/hour |
 | enterprise | 120/min | 1000/min | 200/min | 100/hour | 600/hour |
 

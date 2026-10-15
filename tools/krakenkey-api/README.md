@@ -47,8 +47,7 @@ Limits depend on the user's plan and the route's category (`rate_limit_category`
 | Plan | public | read | write | expensive | renewal |
 |------|--------|------|-------|-----------|---------|
 | free | 30/min | 60/min | 20/min | 5/hour | 10/hour |
-| starter | 60/min | 120/min | 40/min | 10/hour | 30/hour |
-| team | 60/min | 300/min | 60/min | 30/hour | 120/hour |
+| pro | 60/min | 300/min | 60/min | 30/hour | 120/hour |
 | business | 120/min | 600/min | 120/min | 60/hour | 300/hour |
 | enterprise | 120/min | 1000/min | 200/min | 100/hour | 600/hour |
 
@@ -69,7 +68,7 @@ Limits depend on the user's plan and the route's category (`rate_limit_category`
 | Public scan | `public_scan` |
 | Feedback | `submit_feedback` |
 | Organizations | `get_organization` |
-| Billing | `get_subscription`, `preview_upgrade` |
+| Billing | `get_subscription`, `get_billing_plans`, `preview_upgrade` |
 | Users | `list_users`, `get_user` |
 
 48 tools in total.

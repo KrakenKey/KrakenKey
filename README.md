@@ -38,7 +38,7 @@ Private keys never leave your device. CSRs are generated client-side using the W
 - **Notifications** -- email for cert issued/renewed/failed/revoked, expiry warnings and domain verification, plus alerts to Slack, Teams and signed webhooks
 - **Portfolio reports** -- scan a list of hosts into a TLS report with CSV export and expiring share links
 - **Organizations & RBAC** -- teams with owner, admin, member, viewer roles
-- **Subscription billing** -- Stripe-powered tiers (Free, Starter, Team) with plan limit enforcement
+- **Subscription billing** -- Stripe-powered plans (Starter, free; Pro and Business, monthly or yearly) with plan limit enforcement
 - **Go CLI** -- full API parity with local CSR generation (`krakenkey cert issue`, `cert renew`, etc.); Homebrew, apt and dnf packages
 - **GitHub Action** -- cert-action for CI/CD certificate issuance, renewal, and download; signs in with GitHub Actions OIDC, no stored key needed
 - **Terraform provider** -- `krakenkey/krakenkey` on the Terraform and OpenTofu registries; manage domains, certificates and monitoring as code

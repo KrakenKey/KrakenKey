@@ -165,7 +165,7 @@
     },
     {
       "name": "endpoint_region_add",
-      "description": "Add a hosted probe region to an endpoint (Starter tier+) so KrakenKey-operated probes scan it from that region",
+      "description": "Add a hosted probe region to an endpoint so KrakenKey-operated probes scan it from that region. Hosted endpoints per plan: 1 on free (Starter), 25 on Pro, 150 on Business",
       "command": "endpoint region add",
       "args": ["endpoint-id", "region"],
       "example": "krakenkey endpoint region add <uuid> us-east-1"
