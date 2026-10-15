@@ -169,6 +169,6 @@ To report a vulnerability, see [SECURITY.md](SECURITY.md). Please do **not** ope
 
 ## License
 
-KrakenKey is licensed under the [GNU Affero General Public License v3.0](LICENSE).
+Copyright (C) 2026 KrakenKey LLC. KrakenKey is licensed under the [GNU Affero General Public License v3.0](LICENSE).
 
 If you modify KrakenKey and make it available over a network (e.g., as a hosted service), you must make your source code available under the same license.
